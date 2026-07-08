@@ -22,12 +22,12 @@
   }
   *{box-sizing:border-box}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Yu Gothic","Meiryo",sans-serif;margin:0;background:var(--bg);color:var(--ink)}
-  header{padding:16px 22px;background:#163d66;color:white}
-  h1{font-size:20px;margin:0 0 4px}
+  header{padding:10px 16px;background:#163d66;color:white}
+  h1{font-size:18px;margin:0}
   h2{font-size:16px;margin:0 0 8px}
   h3{font-size:14px;margin:12px 0 6px}
   main{display:grid;grid-template-columns:minmax(360px,1.05fr) minmax(320px,.95fr);gap:16px;padding:16px}
-  .sub{font-size:13px;opacity:.92}
+  .sub{display:none}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:0 4px 14px rgba(20,40,80,.06)}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
   button,select{font-size:14px;border-radius:6px;border:1px solid #c8d2e0;background:white;padding:9px 12px}
@@ -80,7 +80,18 @@
   .ng{color:var(--red);font-weight:700}
   .warntext{color:var(--amber);font-weight:700}
   #status{font-weight:700;color:#153f6f}
-  #diag{margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc}
+  #diag{display:none;margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc}
+  .scannerCard{display:flex;flex-direction:column;gap:8px}
+  .scannerControls{margin:0}
+  .scanHud{border:1px solid #cfe0db;border-radius:8px;background:#f8fbfa;padding:10px;display:grid;gap:8px}
+  .scanHudTop{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .scanHudTitle{font-size:17px;font-weight:800;color:#10201d}
+  .scanHudStatus{font-size:12px;font-weight:800;color:#153f6f;white-space:nowrap}
+  .scanHudGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .scanHudItem{min-width:0;border:1px solid #dbe7e3;border-radius:6px;background:white;padding:7px}
+  .scanHudLabel{display:block;font-size:10px;color:var(--muted);font-weight:800}
+  .scanHudValue{display:block;font-size:14px;font-weight:800;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .quickExport{width:100%;min-height:46px;font-size:16px;font-weight:800}
   .launchQrDialog{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.42)}
   .launchQrPanel{width:min(100%,360px);background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;box-shadow:0 18px 42px rgba(15,23,42,.22)}
   .launchQrHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
@@ -98,16 +109,25 @@
   .iphone-note{display:none}
   @media (max-width: 720px){
     body{background:#eef5f3}
-    header{padding:18px 16px}
-    header h1{font-size:22px;line-height:1.25}
-    main{padding:10px;gap:10px}
+    header{display:none}
+    main{display:block;padding:0}
+    .scannerCard{height:100svh;border:0;border-radius:0;padding:8px 8px calc(8px + env(safe-area-inset-bottom));box-shadow:none}
     .card{border-radius:10px;padding:12px}
-    .row{gap:8px}
+    .scannerControls{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px}
+    .scannerControls button{padding:8px 4px}
+    .scannerControls select{grid-column:1 / -1;min-height:40px}
+    .scannerControls #status{grid-column:1 / -1;font-size:13px}
     button,select{min-height:44px;font-size:15px}
-    video{max-height:56vh;background:#07110f}
+    video{flex:1;min-height:0;max-height:none;background:#07110f}
     textarea{font-size:12px}
     #lastText,#combinedText{max-height:96px}
+    .detailsCard{margin:8px}
     .counterGrid{grid-template-columns:1fr 1fr}
+    .scanHud{padding:8px}
+    .scanHudGrid{grid-template-columns:1fr 1fr 1fr;gap:6px}
+    .scanHudItem{padding:6px}
+    .scanHudTitle{font-size:16px}
+    .scanHudValue{font-size:13px}
     .launchQrDialog{align-items:flex-start;padding-top:calc(18px + env(safe-area-inset-top))}
     .launchQrActions button{width:100%}
   }
@@ -115,27 +135,46 @@
 </head>
 <body>
 <header>
-  <h1>QR受信アプリ iPhone Safari版</h1>
-  <div class="sub">iPhoneのカメラでQRを連続読み取りし、Excel/CSVデータ、勤務表、受信ファイルを復元します。読み取り内容はブラウザ内で処理します。</div>
+  <h1>QR受信</h1>
 </header>
 <main>
-  <section class="card">
-    <div class="row">
-      <button id="btnStart" class="primary">カメラ開始</button>
+  <section class="card scannerCard">
+    <div class="row scannerControls">
+      <button id="btnStart" class="primary">開始</button>
       <button id="btnStop">停止</button>
-      <button id="btnRefresh">カメラ一覧更新</button>
       <button id="btnShowLaunchQr">QR</button>
+      <button id="btnRefresh">更新</button>
       <select id="cameraSelect" aria-label="カメラ選択"></select>
       <span id="status">未開始</span>
+    </div>
+    <div class="scanHud" aria-label="読み取り状況">
+      <div class="scanHudTop">
+        <div id="livePrimary" class="scanHudTitle">待機中</div>
+        <div id="liveStatus" class="scanHudStatus">未開始</div>
+      </div>
+      <div class="scanHudGrid">
+        <div class="scanHudItem">
+          <span class="scanHudLabel">進捗</span>
+          <span id="liveProgress" class="scanHudValue">0枚</span>
+        </div>
+        <div class="scanHudItem">
+          <span class="scanHudLabel">不足</span>
+          <span id="liveMissing" class="scanHudValue">-</span>
+        </div>
+        <div class="scanHudItem">
+          <span class="scanHudLabel">最後</span>
+          <span id="liveLast" class="scanHudValue">-</span>
+        </div>
+      </div>
+      <button id="btnQuickExport" class="primary quickExport" disabled>出力待ち</button>
     </div>
     <video id="video" autoplay muted playsinline></video>
     <canvas id="canvas" style="display:none"></canvas>
     <div id="diag" class="small"></div>
-    <p class="small">iPhoneでは背面カメラを優先します。カメラ許可が出たら許可してください。SafariでHTTPSのURLから開くと安定します。</p>
   </section>
 
-  <section class="card">
-    <h2>読み取り結果</h2>
+  <section class="card detailsCard">
+    <h2>詳細</h2>
     <div class="row"><span>状態：</span><span id="readState" class="ok">待機中</span></div>
     <div class="counterGrid" aria-label="読み取りカウンター">
       <div class="counterCard">
@@ -10327,6 +10366,12 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   const chunkInfo = document.getElementById("chunkInfo");
   const chunkBody = document.querySelector("#chunkTable tbody");
   const diag = document.getElementById("diag");
+  const livePrimary = document.getElementById("livePrimary");
+  const liveStatus = document.getElementById("liveStatus");
+  const liveProgress = document.getElementById("liveProgress");
+  const liveMissing = document.getElementById("liveMissing");
+  const liveLast = document.getElementById("liveLast");
+  const btnQuickExport = document.getElementById("btnQuickExport");
   const btnShowLaunchQr = document.getElementById("btnShowLaunchQr");
   const launchQrDialog = document.getElementById("launchQrDialog");
   const btnCloseLaunchQr = document.getElementById("btnCloseLaunchQr");
@@ -10369,13 +10414,21 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     lastNote: "まだ読んでいません"
   };
 
+  function shortText(text, limit=28){
+    const value = String(text || "").replace(/\s+/g, " ").trim();
+    return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+  }
+
   function setState(msg, ok=true){
     readState.textContent = msg;
     readState.className = ok ? "ok" : "ng";
+    livePrimary.textContent = shortText(msg, 34);
+    livePrimary.className = ok ? "scanHudTitle" : "scanHudTitle ng";
   }
 
   function setStatus(msg){
     statusEl.textContent = msg;
+    liveStatus.textContent = msg;
   }
 
   function showLaunchQr(){
@@ -10448,6 +10501,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   async function refreshCameras(){
     if(!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices){
       cameraSelect.innerHTML = "<option value=\"\">カメラ一覧を取得できません</option>";
+      cameraSelect.hidden = true;
       return;
     }
     try{
@@ -10461,6 +10515,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         opt.value = "";
         opt.textContent = "カメラが見つかりません";
         cameraSelect.appendChild(opt);
+        cameraSelect.hidden = true;
         return;
       }
 
@@ -10474,8 +10529,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
       const c920 = Array.from(cameraSelect.options).find(opt => /c920|logitech|hd pro/i.test(opt.textContent));
       if(!previous && c920) c920.selected = true;
+      cameraSelect.hidden = cams.length <= 1;
     }catch(e){
       cameraSelect.innerHTML = "<option value=\"\">カメラ一覧取得エラー</option>";
+      cameraSelect.hidden = true;
       updateDiagnostics(`カメラ一覧取得エラー: ${e.name || e.message}`);
     }
   }
@@ -11411,15 +11468,60 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       headerReadNote.textContent = readStats.headers > 0 ? `${latestHeaders.length || "-"}列 / ${readStats.headers}回` : "先にヘッダーを読みます";
       dataRowCount.textContent = readStats.rowTotal > 0 ? `${readStats.rows}/${readStats.rowTotal}行` : `${readStats.rows}行`;
     }
-    if(!hasFileTransfer() && readStats.rowTotal > 0){
+    if(!hasFileTransfer() && !hasRosterTransfer() && readStats.rowTotal > 0){
       const missing = missingRowNumbers();
       dataRowNote.textContent = missing.length ? `不足: ${compactNumberList(missing)}` : "全行読み取り済み";
-    }else if(!hasFileTransfer()){
+    }else if(!hasFileTransfer() && !hasRosterTransfer()){
       dataRowNote.textContent = readRowIds.size ? `行ID: ${formatIdList(readRowIds)}` : "Excel出力前の読取数";
     }
     lastQrKind.textContent = readStats.lastKind;
     lastQrNote.textContent = readStats.lastNote;
     updateCopyButtonState();
+    updateLiveSummary();
+  }
+
+  function updateLiveSummary(){
+    const fileMode = hasFileTransfer();
+    const rosterMode = hasRosterTransfer();
+    const readiness = fileMode ? fileReadiness() : (rosterMode ? rosterReadiness() : copyReadiness());
+    livePrimary.textContent = readiness.ok ? shortText(readiness.message, 34) : shortText(readState.textContent || readiness.message, 34);
+    livePrimary.className = readiness.ok ? "scanHudTitle ok" : (readState.className || "scanHudTitle");
+    liveStatus.textContent = statusEl.textContent;
+    liveProgress.textContent = liveProgressText(fileMode, rosterMode);
+    liveMissing.textContent = liveMissingText(fileMode, rosterMode, readiness);
+    liveLast.textContent = readStats.lastKind === "-" ? "-" : shortText(`${readStats.lastKind} ${readStats.lastNote}`, 18);
+  }
+
+  function liveProgressText(fileMode, rosterMode){
+    if(fileMode){
+      const group = fileSplitGroups()[0];
+      if(group) return `${group.parts.size}/${group.total}枚`;
+      return completedFiles.size ? `${completedFiles.size}件` : `${readStats.fileQr}枚`;
+    }
+    if(rosterMode){
+      const group = rosterSplitGroups()[0];
+      if(group) return `${group.parts.size}/${group.total}枚`;
+      return latestRoster ? `${latestRoster.memberCount}人` : `${readStats.rosterQr}枚`;
+    }
+    if(readStats.rowTotal > 0) return `${readStats.rows}/${readStats.rowTotal}行`;
+    return `${readStats.total}枚`;
+  }
+
+  function liveMissingText(fileMode, rosterMode, readiness){
+    if(readiness.ok) return "なし";
+    if(fileMode){
+      const group = incompleteFileSplitGroups()[0];
+      return group ? shortText(compactNumberList(missingNumbers(group)), 18) : "-";
+    }
+    if(rosterMode){
+      const group = incompleteRosterSplitGroups()[0];
+      return group ? shortText(compactNumberList(missingNumbers(group)), 18) : "-";
+    }
+    if(readStats.rowTotal > 0){
+      const missing = missingRowNumbers();
+      return missing.length ? shortText(compactNumberList(missing), 18) : "なし";
+    }
+    return "-";
   }
 
   function missingRowNumbers(){
@@ -11554,6 +11656,14 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     if(btnFileExport){
       btnFileExport.disabled = !fileMode || !fileReady.ok;
       btnFileExport.title = fileReady.message;
+    }
+    if(btnQuickExport){
+      const quickReadiness = fileMode ? fileReady : readiness;
+      btnQuickExport.disabled = !quickReadiness.ok;
+      btnQuickExport.textContent = quickReadiness.ok
+        ? (fileMode ? "ファイル保存" : "Excel出力")
+        : "出力待ち";
+      btnQuickExport.title = quickReadiness.message;
     }
   }
 
@@ -11940,6 +12050,14 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     }
   }
 
+  function exportQuick(button){
+    if(hasFileTransfer()){
+      exportCompleteFile(button);
+      return;
+    }
+    exportCompleteWorkbook(button);
+  }
+
   function makeWorkbookFileName(){
     const d = new Date();
     const pad = n => String(n).padStart(2, "0");
@@ -12260,6 +12378,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   btnExcelExport.addEventListener("click", (ev) => exportCompleteWorkbook(ev.currentTarget));
   btnCsvExport.addEventListener("click", (ev) => exportCompleteCsv(ev.currentTarget));
   btnFileExport.addEventListener("click", (ev) => exportCompleteFile(ev.currentTarget));
+  btnQuickExport.addEventListener("click", (ev) => exportQuick(ev.currentTarget));
   document.getElementById("btnReset").addEventListener("click", resetAll);
   cameraSelect.addEventListener("change", () => {
     if(stream) startCamera();
@@ -12283,6 +12402,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
   updateDiagnostics();
   updateReadCounters();
+  updateLiveSummary();
   refreshCameras();
 })();
 </script>
