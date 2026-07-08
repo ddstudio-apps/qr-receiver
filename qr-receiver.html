@@ -106,7 +106,7 @@
 <body>
 <header>
   <h1>QR受信アプリ iPhone Safari版</h1>
-  <div class="sub">iPhoneのカメラでQRを連続読み取りし、Excel/CSVデータまたは受信ファイルを復元します。読み取り内容はブラウザ内で処理します。</div>
+  <div class="sub">iPhoneのカメラでQRを連続読み取りし、Excel/CSVデータ、勤務表、受信ファイルを復元します。読み取り内容はブラウザ内で処理します。</div>
 </header>
 <main>
   <section class="card">
@@ -168,7 +168,7 @@
     <div id="splitSummary" class="progressList"></div>
     <div id="chunkInfo" class="small">分割QR未検出</div>
     <table id="chunkTable"><thead><tr><th>種別</th><th>No.</th><th>状態</th><th>本文先頭</th></tr></thead><tbody></tbody></table>
-    <p class="small mono">対応形式：BNCTQR3|HDR/ROW / BNCTFILE1|FILE / BNCTHDRP1 / BNCTROWP1 / H1/5:本文 / R1/5:本文 / H0:1/1:本文 / R11:1/1:本文 / BNCTQR|001|005|本文</p>
+    <p class="small mono">対応形式：勤務表JSON / BNCTQR3|HDR/ROW / BNCTFILE1|FILE / BNCTHDRP1 / BNCTROWP1 / H1/5:本文 / R1/5:本文 / H0:1/1:本文 / R11:1/1:本文 / BNCTQR|001|005|本文</p>
   </section>
 </main>
 <script>
@@ -10320,6 +10320,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   let readRowIds = new Set();
   let completedRows = new Map();
   let completedFiles = new Map();
+  let latestRoster = null;
   let latestFileId = "";
   let latestHeaderMeta = { batchId: "", headerHash: "", sourceSheet: "" };
   let readStats = {
@@ -10329,10 +10330,12 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     headerQr: 0,
     rowQr: 0,
     fileQr: 0,
+    rosterQr: 0,
     otherQr: 0,
     headers: 0,
     rows: 0,
     files: 0,
+    rosters: 0,
     rowTotal: 0,
     lastKind: "-",
     lastNote: "まだ読んでいません"
@@ -10588,6 +10591,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       readStats.rowQr += 1;
     }else if(kindInfo.bucket === "file"){
       readStats.fileQr += 1;
+    }else if(kindInfo.bucket === "roster"){
+      readStats.rosterQr += 1;
     }else{
       readStats.otherQr += 1;
     }
@@ -10598,6 +10603,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function classifyQrText(text, split){
+    if(split?.kind === "ROSTER" || parseRosterOuterQR(text)){
+      return { bucket: "roster", label: "勤務表", note: split ? formatSplitNote(split) : "勤務表QR" };
+    }
     if(split?.kind === "HDR" || text.startsWith("BNCTHDR1:") || text.startsWith("BNCTHDR2:")){
       return { bucket: "header", label: "ヘッダー", note: split ? formatSplitNote(split) : "1枚" };
     }
@@ -10625,6 +10633,24 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
   function parseSplitQR(value){
     const text = String(value).trim();
+    const roster = parseRosterOuterQR(text);
+    if(roster){
+      return {
+        key: `ROSTER|${roster.week}|${roster.hash}`,
+        kind: "ROSTER",
+        label: "勤務表QR",
+        groupId: `${roster.week || "勤務表"}:${roster.hash || ""}`,
+        no: roster.part,
+        total: roster.total,
+        payload: roster.data,
+        raw: text,
+        format: "GAIRAI_ROSTER",
+        rosterWeek: roster.week,
+        rosterHash: roster.hash,
+        outerApp: roster.app
+      };
+    }
+
     const file1 = parseBnctFile1(text);
     if(file1){
       const groupId = `${file1.batchId}:${file1.fileName || "file"}`;
@@ -10711,6 +10737,30 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       return makeBnctSplit(short[1].toUpperCase() === "H" ? "BNCTHDRP1" : "BNCTROWP1", "SHORT", short[2], short[3], short[4], text);
     }
     return null;
+  }
+
+  function parseRosterOuterQR(text){
+    try{
+      if(!String(text).trim().startsWith("{")) return null;
+      const outer = JSON.parse(text);
+      const part = parseInt(outer.part, 10);
+      const total = parseInt(outer.total, 10);
+      const hash = String(outer.hash ?? "");
+      const data = String(outer.data ?? "");
+      if(!outer || typeof outer !== "object" || !Number.isFinite(part) || !Number.isFinite(total)) return null;
+      if(part < 1 || total < 1 || part > total || !hash || !data) return null;
+      if(!/^[A-Za-z0-9_-]+$/.test(data)) return null;
+      return {
+        app: String(outer.app ?? ""),
+        week: String(outer.week ?? ""),
+        part,
+        total,
+        hash,
+        data
+      };
+    }catch(e){
+      return null;
+    }
   }
 
   function parseBnctFile1(text){
@@ -10835,6 +10885,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     if(group.parts.size === group.total){
       if(group.kind === "FILE"){
         void completeFileGroup(group, joinGroupPayload(group));
+      }else if(group.kind === "ROSTER"){
+        completeRosterGroup(group, joinGroupPayload(group));
       }else{
         const joined = buildJoinedText(group);
         completedSplitMeta.set(joined, groupMeta(group));
@@ -10864,7 +10916,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       fileName: part.fileName || "",
       mimeType: part.mimeType || "",
       byteSize: Number(part.byteSize || 0),
-      sha256: part.sha256 || ""
+      sha256: part.sha256 || "",
+      rosterWeek: part.rosterWeek || "",
+      rosterHash: part.rosterHash || "",
+      outerApp: part.outerApp || ""
     };
   }
 
@@ -10881,7 +10936,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       fileName: group.fileName || "",
       mimeType: group.mimeType || "",
       byteSize: Number(group.byteSize || 0),
-      sha256: group.sha256 || ""
+      sha256: group.sha256 || "",
+      rosterWeek: group.rosterWeek || "",
+      rosterHash: group.rosterHash || "",
+      outerApp: group.outerApp || ""
     };
   }
 
@@ -10989,6 +11047,145 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       setState("ファイル復元に失敗しました: " + (e.message || e), false);
       updateCopyButtonState();
     }
+  }
+
+  const ROSTER_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._";
+  const ROSTER_CHECKSUM_MOD = 1000000007;
+
+  function completeRosterGroup(group, payload){
+    try{
+      const roster = decodeRosterPayload(payload, group);
+      latestRoster = roster;
+      readStats.rosters = 1;
+      readStats.lastKind = "勤務表";
+      readStats.lastNote = `${roster.month} / ${roster.memberCount}人 / ${roster.days}日`;
+      const marker = `[ROSTER] ${roster.month} (${roster.memberCount}人 ${roster.days}日)`;
+      history = [marker, JSON.stringify(roster.inner, null, 2)];
+      combinedText.value = history.join("\n");
+      showRosterPreview(roster);
+      setState(`勤務表QR 復元完了：${roster.month}`);
+      updateReadCounters();
+    }catch(e){
+      setState("勤務表QRの復元に失敗しました: " + (e.message || e), false);
+      updateCopyButtonState();
+    }
+  }
+
+  function decodeRosterPayload(payload, group){
+    const joined = String(payload || "");
+    const expectedHash = String(group.rosterHash || "");
+    if(expectedHash && rosterChecksum(joined) !== expectedHash){
+      throw new Error("チェックサム不一致");
+    }
+
+    const inner = JSON.parse(decodeBase64UrlUtf8(joined));
+    if(inner.a !== "gairai-roster-month-v1"){
+      throw new Error(`勤務表形式ではありません: ${inner.a || "不明"}`);
+    }
+    if(inner.enc !== "sym64"){
+      throw new Error(`未対応の勤務表エンコードです: ${inner.enc || "不明"}`);
+    }
+    if(!Array.isArray(inner.sym) || !Array.isArray(inner.n) || !Array.isArray(inner.p) || !Array.isArray(inner.x)){
+      throw new Error("勤務表データの配列が不足しています");
+    }
+    if(!(inner.n.length === inner.p.length && inner.n.length === inner.x.length)){
+      throw new Error("氏名・予定・修正の件数が一致しません");
+    }
+
+    const days = parseInt(inner.days, 10);
+    if(!Number.isFinite(days) || days < 1 || days > 366){
+      throw new Error("日数が不正です");
+    }
+
+    const headers = ["氏名", "種別"];
+    for(let day=1; day<=days; day++) headers.push(`${day}日`);
+
+    const sheetRows = [headers];
+    const verticalRows = [["月", "日付", "氏名", "種別", "記号"]];
+    const previewRows = [];
+    for(let i=0; i<inner.n.length; i++){
+      const name = String(inner.n[i] ?? "");
+      const plan = decodeRosterSymbolRow(String(inner.p[i] ?? ""), inner.sym, days);
+      const actual = decodeRosterSymbolRow(String(inner.x[i] ?? ""), inner.sym, days);
+      const planRow = [name, "予定", ...plan];
+      const actualRow = [name, "修正", ...actual];
+      sheetRows.push(planRow, actualRow);
+      previewRows.push(planRow, actualRow);
+      for(let day=1; day<=days; day++){
+        const dateText = rosterDateText(inner, day);
+        verticalRows.push([String(inner.m || group.rosterWeek || ""), dateText, name, "予定", plan[day - 1]]);
+        verticalRows.push([String(inner.m || group.rosterWeek || ""), dateText, name, "修正", actual[day - 1]]);
+      }
+    }
+
+    return {
+      inner,
+      month: String(inner.m || group.rosterWeek || ""),
+      days,
+      memberCount: inner.n.length,
+      symbolCount: inner.sym.length,
+      sheetRows,
+      verticalRows,
+      previewRows,
+      checksum: expectedHash || rosterChecksum(joined)
+    };
+  }
+
+  function rosterChecksum(text){
+    let total = 0;
+    for(let i=0; i<String(text).length; i++){
+      total = (total + String(text).charCodeAt(i)) % ROSTER_CHECKSUM_MOD;
+    }
+    return String(total);
+  }
+
+  function decodeRosterSymbolRow(code, symbols, days){
+    if(code.length !== days){
+      throw new Error(`勤務行の長さが日数と一致しません（${code.length}/${days}）`);
+    }
+    const row = [];
+    for(const ch of code){
+      const idx = ROSTER_ALPHABET.indexOf(ch);
+      if(idx < 0 || idx >= symbols.length){
+        throw new Error(`勤務記号コードが辞書外です: ${ch}`);
+      }
+      row.push(String(symbols[idx] ?? ""));
+    }
+    return row;
+  }
+
+  function rosterDateText(inner, day){
+    const year = parseInt(inner.y, 10);
+    const month = parseInt(inner.mo, 10);
+    if(Number.isFinite(year) && Number.isFinite(month)){
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+    return `${day}日`;
+  }
+
+  function showRosterPreview(roster){
+    decodedPreview.innerHTML = [
+      `<div class="previewTitle"><span>勤務表QR</span><span class="ok">復元完了</span></div>`,
+      `<div class="previewMeta">月: ${escapeHtml(roster.month)} / ${roster.memberCount}人 / ${roster.days}日 / 記号${roster.symbolCount}種 / Hash: ${escapeHtml(roster.checksum)}</div>`,
+      renderRosterPreviewTable(roster)
+    ].join("");
+  }
+
+  function renderRosterPreviewTable(roster){
+    const dayLimit = Math.min(roster.days, 10);
+    const rowLimit = Math.min(roster.previewRows.length, 10);
+    const headers = ["氏名", "種別"];
+    for(let day=1; day<=dayLimit; day++) headers.push(`${day}日`);
+    const rows = roster.previewRows.slice(0, rowLimit).map(row => row.slice(0, dayLimit + 2));
+    const more = roster.previewRows.length > rowLimit || roster.days > dayLimit
+      ? `<div class="emptyPreview">プレビューは先頭${Math.ceil(rowLimit / 2)}人・${dayLimit}日分です。Excel出力には全データを含めます。</div>`
+      : "";
+    return [
+      `<div class="previewTableWrap"><table><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>`,
+      rows.map(row => `<tr>${row.map(v => `<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join(""),
+      `</tbody></table></div>`,
+      more
+    ].join("");
   }
 
   function missingNumbers(group){
@@ -11147,7 +11344,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
   function updateReadCounters(){
     totalQrCount.textContent = `${readStats.total}枚`;
-    qrBreakdown.innerHTML = `ヘッダー${readStats.headerQr} / 行${readStats.rowQr} / ファイル${readStats.fileQr} / その他${readStats.otherQr}<br>読取${readStats.scanEvents} / 重複${readStats.duplicates}`;
+    qrBreakdown.innerHTML = `ヘッダー${readStats.headerQr} / 行${readStats.rowQr} / ファイル${readStats.fileQr} / 勤務表${readStats.rosterQr} / その他${readStats.otherQr}<br>読取${readStats.scanEvents} / 重複${readStats.duplicates}`;
     if(hasFileTransfer()){
       headerReadStatus.textContent = readStats.files > 0 ? "完了" : "受信中";
       headerReadStatus.className = readStats.files > 0 ? "counterValue ok" : "counterValue";
@@ -11161,6 +11358,13 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         : readStats.files > 0
           ? "保存可能"
           : "全分割QRの受信待ち";
+    }else if(hasRosterTransfer()){
+      const readiness = rosterReadiness();
+      headerReadStatus.textContent = latestRoster ? "完了" : "受信中";
+      headerReadStatus.className = latestRoster ? "counterValue ok" : "counterValue";
+      headerReadNote.textContent = latestRoster ? latestRoster.month : "勤務表QRを読み取り中";
+      dataRowCount.textContent = latestRoster ? `${latestRoster.memberCount}人` : `${readStats.rosterQr}枚`;
+      dataRowNote.textContent = readiness.message;
     }else{
       headerReadStatus.textContent = readStats.headers > 0 ? "済" : "未読";
       headerReadStatus.className = readStats.headers > 0 ? "counterValue ok" : "counterValue";
@@ -11202,6 +11406,18 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return readStats.fileQr > 0 || fileSplitGroups().length > 0 || completedFiles.size > 0;
   }
 
+  function rosterSplitGroups(){
+    return Array.from(splitGroups.values()).filter(group => group.kind === "ROSTER");
+  }
+
+  function incompleteRosterSplitGroups(){
+    return rosterSplitGroups().filter(group => group.parts.size < group.total);
+  }
+
+  function hasRosterTransfer(){
+    return readStats.rosterQr > 0 || rosterSplitGroups().length > 0 || !!latestRoster;
+  }
+
   function fileReadiness(){
     if(!hasFileTransfer()){
       return { ok: false, message: "保存できるファイルQRがありません" };
@@ -11221,9 +11437,31 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return { ok: true, message: `${fileInfo.fileName} を保存できます` };
   }
 
+  function rosterReadiness(){
+    if(!hasRosterTransfer()){
+      return { ok: false, message: "勤務表QRがありません" };
+    }
+    const incomplete = incompleteRosterSplitGroups();
+    if(incomplete.length){
+      const group = incomplete[0];
+      return {
+        ok: false,
+        message: `勤務表QRが未完了です（${group.parts.size}/${group.total}、不足: ${compactNumberList(missingNumbers(group))}）`
+      };
+    }
+    if(!latestRoster){
+      return { ok: false, message: "勤務表の検証が完了していません" };
+    }
+    return { ok: true, message: `勤務表を出力できます（${latestRoster.month} / ${latestRoster.memberCount}人）` };
+  }
+
   function copyReadiness(){
     if(!combinedText.value.trim() || !history.length){
       return { ok: false, message: "コピー/出力できる完成データがありません" };
+    }
+
+    if(hasRosterTransfer()){
+      return rosterReadiness();
     }
 
     const incomplete = incompleteSplitGroups();
@@ -11550,6 +11788,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function getWorkbookRowsForExport(){
+    if(latestRoster){
+      return latestRoster.sheetRows;
+    }
     const rowEntries = Array.from(completedRows.values()).sort((a, b) => {
       const na = Number(a.rowNo), nb = Number(b.rowNo);
       if(Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
@@ -11603,7 +11844,12 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     }
     try{
       const rows = getWorkbookRowsForExport();
-      const blob = createXlsxBlob(rows);
+      const blob = latestRoster
+        ? createXlsxBlobFromSheets([
+          { name: "復元勤務表", rows: latestRoster.sheetRows },
+          { name: "縦持ち", rows: latestRoster.verticalRows }
+        ])
+        : createXlsxBlob(rows);
       downloadBlob(blob, makeWorkbookFileName());
       setState(`Excelファイルを作成しました（${rows.length - 1}行 / ${rows[0].length}列）`);
       showCopyFeedback(button, "Excel出力しました", "ok");
@@ -11658,6 +11904,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     const d = new Date();
     const pad = n => String(n).padStart(2, "0");
     const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    if(latestRoster){
+      const month = latestRoster.month ? `_${safeFilePart(latestRoster.month).slice(0, 24)}` : "";
+      return `QR勤務表_復元${month}_${stamp}.xlsx`;
+    }
     const source = latestHeaderMeta.sourceSheet ? `_${safeFilePart(latestHeaderMeta.sourceSheet).slice(0, 24)}` : "";
     return `BNCT_QR受信データ${source}_${stamp}.xlsx`;
   }
@@ -11680,6 +11930,11 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return String(text || "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/\s+/g, "_");
   }
 
+  function safeSheetName(text, index){
+    const cleaned = String(text || `Sheet${index + 1}`).replace(/[\[\]:*?/\\]/g, "_").trim().slice(0, 31);
+    return cleaned || `Sheet${index + 1}`;
+  }
+
   function safeDownloadName(text){
     const cleaned = String(text || "受信ファイル.bin").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim();
     return cleaned || "受信ファイル.bin";
@@ -11697,26 +11952,34 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function createXlsxBlob(rows){
+    return createXlsxBlobFromSheets([{ name: "QR受信データ", rows }]);
+  }
+
+  function createXlsxBlobFromSheets(inputSheets){
+    const sheets = inputSheets.map((sheet, index) => ({
+      name: safeSheetName(sheet.name || `Sheet${index + 1}`, index),
+      rows: Array.isArray(sheet.rows) && sheet.rows.length ? sheet.rows : [[""]]
+    }));
     const files = [
-      { name: "[Content_Types].xml", text: contentTypesXml() },
+      { name: "[Content_Types].xml", text: contentTypesXml(sheets) },
       { name: "_rels/.rels", text: rootRelsXml() },
-      { name: "xl/workbook.xml", text: workbookXml() },
-      { name: "xl/_rels/workbook.xml.rels", text: workbookRelsXml() },
+      { name: "xl/workbook.xml", text: workbookXml(sheets) },
+      { name: "xl/_rels/workbook.xml.rels", text: workbookRelsXml(sheets) },
       { name: "xl/styles.xml", text: stylesXml() },
-      { name: "xl/worksheets/sheet1.xml", text: worksheetXml(rows) }
+      ...sheets.map((sheet, index) => ({ name: `xl/worksheets/sheet${index + 1}.xml`, text: worksheetXml(sheet.rows) }))
     ];
     return new Blob([zipStore(files)], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     });
   }
 
-  function contentTypesXml(){
+  function contentTypesXml(sheets){
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
       `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
       `<Default Extension="xml" ContentType="application/xml"/>` +
       `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
-      `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+      sheets.map((_, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("") +
       `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
       `</Types>`;
   }
@@ -11728,18 +11991,18 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       `</Relationships>`;
   }
 
-  function workbookXml(){
+  function workbookXml(sheets){
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
-      `<sheets><sheet name="QR受信データ" sheetId="1" r:id="rId1"/></sheets>` +
+      `<sheets>${sheets.map((sheet, index) => `<sheet name="${escapeXml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets>` +
       `</workbook>`;
   }
 
-  function workbookRelsXml(){
+  function workbookRelsXml(sheets){
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
-      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
-      `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+      sheets.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("") +
+      `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
       `</Relationships>`;
   }
 
@@ -11913,6 +12176,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     readRowIds = new Set();
     completedRows = new Map();
     completedFiles = new Map();
+    latestRoster = null;
     latestFileId = "";
     latestHeaderMeta = { batchId: "", headerHash: "", sourceSheet: "" };
     readStats = {
@@ -11922,10 +12186,12 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       headerQr: 0,
       rowQr: 0,
       fileQr: 0,
+      rosterQr: 0,
       otherQr: 0,
       headers: 0,
       rows: 0,
       files: 0,
+      rosters: 0,
       rowTotal: 0,
       lastKind: "-",
       lastNote: "まだ読んでいません"
@@ -11956,10 +12222,13 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       resetAll,
       getWorkbookRowsForExport,
       createXlsxBlob,
+      createXlsxBlobFromSheets,
       createCsvText,
       copyReadiness,
       fileReadiness,
-      parseSplitQR
+      rosterReadiness,
+      parseSplitQR,
+      getLatestRoster: () => latestRoster
     };
   }
 
