@@ -38,7 +38,7 @@
   button.copyError{background:var(--red);border-color:var(--red);color:white}
   button:disabled{opacity:.55;cursor:not-allowed}
   select{min-width:240px;max-width:100%}
-  video{width:100%;background:#101214;border-radius:8px;max-height:58vh;object-fit:contain}
+  video{width:100%;aspect-ratio:4 / 3;min-height:240px;max-height:560px;background:#0f172a;border-radius:8px;object-fit:contain}
   textarea{width:100%;border:1px solid #c8d2e0;border-radius:6px;padding:10px;font-size:13px;line-height:1.5;resize:vertical;background:#fbfdff}
   table{width:100%;border-collapse:collapse;font-size:12px}
   th,td{border-bottom:1px solid #e5e7eb;text-align:left;padding:6px}
@@ -63,6 +63,9 @@
   .sheetPreview .emptyCell{color:#94a3b8}
   .emptyPreview{font-size:12px;color:var(--muted);line-height:1.6}
   .progressList{display:grid;gap:10px;margin:8px 0 10px}
+  .parts{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin:10px 0 2px}
+  .part{min-height:34px;border:1px solid var(--line);border-radius:8px;background:#f8fafc;color:var(--muted);text-align:center;font-size:.78rem;font-weight:900;line-height:34px}
+  .part.done{border-color:var(--green);background:#e8f5f4;color:var(--green)}
   .progressItem{border:1px solid #dbe4ef;border-radius:8px;padding:10px;background:#fbfdff}
   .progressHead{display:flex;justify-content:space-between;gap:10px;align-items:center;font-weight:700}
   .progressMeta{font-size:12px;color:var(--muted);margin-top:3px}
@@ -82,7 +85,9 @@
   #status{font-weight:700;color:#153f6f}
   #diag{display:none;margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc}
   .scannerCard{display:flex;flex-direction:column;gap:8px}
-  .scannerControls{margin:0}
+  .scannerControls{margin:0;display:flex;flex-wrap:wrap;gap:10px}
+  .scannerControls button{flex:1 1 120px}
+  .scannerControls #btnQuickExport{flex:1 1 120px;width:auto}
   .scanHud{border:1px solid #cfe0db;border-radius:8px;background:#f8fbfa;padding:10px;display:grid;gap:8px}
   .scanHudTop{display:flex;align-items:center;justify-content:space-between;gap:8px}
   .scanHudTitle{font-size:17px;font-weight:800;color:#10201d}
@@ -111,18 +116,19 @@
     body{background:#eef5f3}
     header{display:none}
     main{display:block;padding:0}
-    .scannerCard{height:100svh;border:0;border-radius:0;padding:8px 8px calc(8px + env(safe-area-inset-bottom));box-shadow:none}
+    .scannerCard{border:0;border-radius:0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:none}
     .card{border-radius:10px;padding:12px}
-    .scannerControls{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px}
-    .scannerControls button{padding:8px 4px}
+    .scannerControls{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+    .scannerControls button{flex:1 1 120px;padding:0 14px}
     .scannerControls select{grid-column:1 / -1;min-height:40px}
-    .scannerControls #status{grid-column:1 / -1;font-size:13px}
+    .scannerControls #status{flex:1 0 100%;font-size:13px}
     button,select{min-height:44px;font-size:15px}
-    video{flex:1;min-height:0;max-height:none;background:#07110f}
+    video{min-height:240px;max-height:560px;background:#0f172a}
     textarea{font-size:12px}
     #lastText,#combinedText{max-height:96px}
     .detailsCard{margin:8px}
     .counterGrid{grid-template-columns:1fr 1fr}
+    .parts{grid-template-columns:repeat(4,1fr)}
     .scanHud{padding:8px}
     .scanHudGrid{grid-template-columns:1fr 1fr 1fr;gap:6px}
     .scanHudItem{padding:6px}
@@ -140,13 +146,18 @@
 <main>
   <section class="card scannerCard">
     <div class="row scannerControls">
-      <button id="btnStart" class="primary">開始</button>
-      <button id="btnStop">停止</button>
-      <button id="btnShowLaunchQr">QR</button>
-      <button id="btnRefresh">更新</button>
+      <button id="btnStart" class="primary">カメラ開始</button>
+      <button id="btnStop" disabled>カメラ停止</button>
+      <button id="btnTopReset" disabled>クリア</button>
+      <button id="btnQuickExport" class="primary quickExport" disabled>Excel出力</button>
+      <button id="btnShowLaunchQr" hidden>QR</button>
+      <button id="btnRefresh" hidden>更新</button>
       <select id="cameraSelect" aria-label="カメラ選択" hidden></select>
       <span id="status">未開始</span>
     </div>
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="canvas" style="display:none"></canvas>
+    <div class="parts" id="liveParts"></div>
     <div class="scanHud" aria-label="読み取り状況">
       <div class="scanHudTop">
         <div id="livePrimary" class="scanHudTitle">待機中</div>
@@ -166,10 +177,7 @@
           <span id="liveLast" class="scanHudValue">-</span>
         </div>
       </div>
-      <button id="btnQuickExport" class="primary quickExport" disabled>出力待ち</button>
     </div>
-    <video id="video" autoplay muted playsinline></video>
-    <canvas id="canvas" style="display:none"></canvas>
     <div id="diag" class="small"></div>
   </section>
 
@@ -10371,7 +10379,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   const liveProgress = document.getElementById("liveProgress");
   const liveMissing = document.getElementById("liveMissing");
   const liveLast = document.getElementById("liveLast");
+  const liveParts = document.getElementById("liveParts");
   const btnQuickExport = document.getElementById("btnQuickExport");
+  const btnTopReset = document.getElementById("btnTopReset");
   const btnShowLaunchQr = document.getElementById("btnShowLaunchQr");
   const launchQrDialog = document.getElementById("launchQrDialog");
   const btnCloseLaunchQr = document.getElementById("btnCloseLaunchQr");
@@ -10431,6 +10441,19 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     liveStatus.textContent = msg;
   }
 
+  function hasReadData(){
+    return countedRawQrs.size > 0 || splitGroups.size > 0 || history.length > 0 || !!latestRoster || completedFiles.size > 0;
+  }
+
+  function updateTopControls(){
+    const active = !!stream;
+    const btnStart = document.getElementById("btnStart");
+    const btnStop = document.getElementById("btnStop");
+    if(btnStart) btnStart.disabled = active;
+    if(btnStop) btnStop.disabled = !active;
+    if(btnTopReset) btnTopReset.disabled = !hasReadData();
+  }
+
   function showLaunchQr(){
     launchQrDialog.hidden = false;
     launchQrDialog.setAttribute("aria-hidden", "false");
@@ -10473,6 +10496,12 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     barcodeDetector = null;
     decoderName = "";
 
+    if(hasJsQR()){
+      decoderName = "jsQR";
+      updateDiagnostics();
+      return true;
+    }
+
     if(hasBarcodeDetector()){
       try{
         const formats = await BarcodeDetector.getSupportedFormats().catch(()=>[]);
@@ -10485,12 +10514,6 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       }catch(e){
         barcodeDetector = null;
       }
-    }
-
-    if(hasJsQR()){
-      decoderName = "jsQR";
-      updateDiagnostics();
-      return true;
     }
 
     updateDiagnostics("QR解析ライブラリが読み込めませんでした。1ファイル版を開き直してください。");
@@ -10529,8 +10552,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
       const c920 = Array.from(cameraSelect.options).find(opt => /c920|logitech|hd pro/i.test(opt.textContent));
       if(!previous && c920) c920.selected = true;
-      const hasNamedCamera = cams.some(cam => String(cam.label || "").trim());
-      cameraSelect.hidden = cams.length <= 1 || !hasNamedCamera;
+      cameraSelect.hidden = true;
     }catch(e){
       cameraSelect.innerHTML = "<option value=\"\">カメラ一覧取得エラー</option>";
       cameraSelect.hidden = true;
@@ -10552,31 +10574,22 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     updateDiagnostics();
 
     try{
-      const deviceId = cameraSelect.value;
       let constraints = {
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
+        video: { facingMode: { ideal: "environment" } },
         audio: false
       };
-      if(deviceId) constraints.video.deviceId = { exact: deviceId };
 
       try{
         stream = await navigator.mediaDevices.getUserMedia(constraints);
       }catch(e){
-        if(deviceId && (e.name === "OverconstrainedError" || e.name === "NotFoundError")){
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        }else{
-          throw e;
-        }
+        throw e;
       }
 
       video.srcObject = stream;
       await video.play();
       await refreshCameras();
       setStatus("カメラ稼働中");
+      updateTopControls();
 
       const decoderReady = await initDecoder();
       if(decoderReady){
@@ -10586,6 +10599,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     }catch(e){
       stream = null;
       video.srcObject = null;
+      updateTopControls();
       setStatus("開始失敗");
       setState(cameraErrorMessage(e), false);
       updateDiagnostics(`エラー: ${(e && (e.name || e.message)) || e}`);
@@ -10605,6 +10619,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       setState("停止しました");
       updateDiagnostics();
     }
+    updateTopControls();
   }
 
   function cameraErrorMessage(e){
@@ -10627,7 +10642,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   async function scanLoop(){
     if(!stream || !decoderName) return;
     const now = performance.now();
-    if(now - lastScanAt >= 120 && video.readyState >= 2 && video.videoWidth && video.videoHeight){
+    if(now - lastScanAt >= 0 && video.readyState >= 2 && video.videoWidth && video.videoHeight){
       lastScanAt = now;
       try{
         canvas.width = video.videoWidth;
@@ -10640,7 +10655,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
           if(codes && codes.length) value = (codes[0].rawValue || "").trim();
         }else if(hasJsQR()){
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
+          const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
           if(code && code.data) value = code.data.trim();
         }
 
@@ -10660,7 +10675,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     lastText.value = value;
     const isNewRaw = recordRawQr(value);
     if(!isNewRaw){
-      setState("重複QRを読み取りました（加算なし）");
+      const readiness = primaryReadiness();
+      setState(readiness.ok ? readiness.message : "重複QRを読み取りました（加算なし）", readiness.ok);
       return;
     }
     parseAndStore(value);
@@ -10976,6 +10992,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       setState(`${part.label} ${part.no}/${part.total} の内容が前回と異なります`, false);
       return;
     }
+    group.rosterError = "";
     group.parts.set(part.no, part);
     group.lastNo = part.no;
 
@@ -11017,7 +11034,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       sha256: part.sha256 || "",
       rosterWeek: part.rosterWeek || "",
       rosterHash: part.rosterHash || "",
-      outerApp: part.outerApp || ""
+      outerApp: part.outerApp || "",
+      rosterError: ""
     };
   }
 
@@ -11037,7 +11055,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       sha256: group.sha256 || "",
       rosterWeek: group.rosterWeek || "",
       rosterHash: group.rosterHash || "",
-      outerApp: group.outerApp || ""
+      outerApp: group.outerApp || "",
+      rosterError: group.rosterError || ""
     };
   }
 
@@ -11153,33 +11172,44 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   function completeRosterGroup(group, payload){
     try{
       const roster = decodeRosterPayload(payload, group);
+      group.rosterError = "";
       latestRoster = roster;
       readStats.rosters = 1;
+      const summary = roster.summaryLabel || `${roster.memberCount}人`;
       readStats.lastKind = "勤務表";
-      readStats.lastNote = `${roster.month} / ${roster.memberCount}人 / ${roster.days}日`;
-      const marker = `[ROSTER] ${roster.month} (${roster.memberCount}人 ${roster.days}日)`;
+      readStats.lastNote = `${roster.month} / ${summary} / ${roster.days}日`;
+      const marker = `[ROSTER] ${roster.month} (${summary} ${roster.days}日)`;
       history = [marker, JSON.stringify(roster.inner, null, 2)];
       combinedText.value = history.join("\n");
       showRosterPreview(roster);
-      setState(`勤務表QR 復元完了：${roster.month}`);
+      setState(`勤務表QR 復元完了：${roster.month} / ${summary}`);
       updateReadCounters();
     }catch(e){
-      setState("勤務表QRの復元に失敗しました: " + (e.message || e), false);
-      updateCopyButtonState();
+      group.rosterError = e.message || String(e);
+      setState("勤務表QRの復元に失敗しました: " + group.rosterError, false);
+      updateReadCounters();
     }
   }
 
   function decodeRosterPayload(payload, group){
     const joined = String(payload || "");
     const expectedHash = String(group.rosterHash || "");
-    if(expectedHash && rosterChecksum(joined) !== expectedHash){
+    if(expectedHash && rosterChecksum(joined) !== expectedHash && rosterWeightedChecksum(joined) !== expectedHash){
       throw new Error("チェックサム不一致");
     }
 
     const inner = JSON.parse(decodeBase64UrlUtf8(joined));
-    if(inner.a !== "gairai-roster-month-v1"){
-      throw new Error(`勤務表形式ではありません: ${inner.a || "不明"}`);
+    const appType = String(inner.a || inner.app || "");
+    if(appType === "gairai-roster-month-v1"){
+      return decodeRosterMonthPayload(inner, group, joined, expectedHash);
     }
+    if(appType === "gairai-break-week-v1" || appType === "gairai-break-week-v2"){
+      return decodeRosterWeekPayload(inner, group, joined, expectedHash);
+    }
+    throw new Error(`勤務表形式ではありません: ${appType || "不明"}`);
+  }
+
+  function decodeRosterMonthPayload(inner, group, joined, expectedHash){
     if(inner.enc !== "sym64"){
       throw new Error(`未対応の勤務表エンコードです: ${inner.enc || "不明"}`);
     }
@@ -11225,7 +11255,88 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       sheetRows,
       verticalRows,
       previewRows,
-      checksum: expectedHash || rosterChecksum(joined)
+      previewHeaders: headers,
+      checksum: expectedHash || rosterChecksum(joined),
+      summaryLabel: `${inner.n.length}人`
+    };
+  }
+
+  function decodeRosterWeekPayload(inner, group, joined, expectedHash){
+    const type = String(inner.a || inner.app || "");
+    let entries = [];
+    let members = [];
+    let attendanceCounts = {};
+    let attendanceMembers = {};
+    let weekStart = "";
+
+    if(type === "gairai-break-week-v1" && Array.isArray(inner.entries)){
+      weekStart = String(inner.weekStart || group.rosterWeek || "");
+      entries = inner.entries.map((row, index) => ({
+        date: String(row?.date || ""),
+        location: String(row?.location || ""),
+        phone: String(row?.phone || ""),
+        member: String(row?.member || ""),
+        sort: Number(row?.sort || index + 1)
+      })).filter(row => row.date && row.location && row.member);
+      members = normalizeRosterMembers(inner.members || []);
+      attendanceCounts = normalizeAttendanceCounts(inner.attendanceCounts || {});
+      attendanceMembers = normalizeAttendanceMembers(inner.attendanceMembers || {}, members);
+    }else{
+      if(!Array.isArray(inner.d) || !Array.isArray(inner.l) || !Array.isArray(inner.e)){
+        throw new Error("勤務表データの配列が不足しています");
+      }
+      weekStart = String(inner.w || group.rosterWeek || "");
+      members = normalizeRosterMembers(inner.members || []);
+      attendanceCounts = normalizeAttendanceCounts(inner.attendanceCounts || {});
+      attendanceMembers = normalizeAttendanceMembers(inner.attendanceMembers || {}, members);
+      entries = inner.e.map((row, index) => {
+        const dateIndex = Number(row && row[0]);
+        const locationIndex = Number(row && row[1]);
+        return {
+          date: String(inner.d[dateIndex] || ""),
+          location: String(inner.l[locationIndex] || ""),
+          phone: "",
+          member: String(row && row[2] || ""),
+          sort: index + 1
+        };
+      }).filter(row => row.date && row.location && row.member);
+    }
+
+    if(!entries.length){
+      throw new Error("取り込める勤務表データがありません");
+    }
+
+    const uniqueMembers = normalizeRosterMembers(members.length ? members : entries.map(row => row.member));
+    const sheetRows = [
+      ["日付", "配置", "担当者", "電話", "順序"],
+      ...entries.map(row => [row.date, row.location, row.member, row.phone || "", row.sort || ""])
+    ];
+    const verticalRows = [
+      ["種別", "日付", "配置", "担当者", "値"],
+      ...entries.map(row => ["配置", row.date, row.location, row.member, row.sort || ""])
+    ];
+    Object.keys(attendanceCounts).sort().forEach(date => {
+      verticalRows.push(["出勤予定人数", date, "", "", attendanceCounts[date]]);
+    });
+    Object.keys(attendanceMembers).sort().forEach(date => {
+      attendanceMembers[date].forEach(name => {
+        verticalRows.push(["出勤予定メンバー", date, "", name, ""]);
+      });
+    });
+
+    return {
+      inner,
+      month: weekStart || group.rosterWeek || "勤務表",
+      days: new Set(entries.map(row => row.date)).size,
+      memberCount: uniqueMembers.length || entries.length,
+      entryCount: entries.length,
+      symbolCount: 0,
+      sheetRows,
+      verticalRows,
+      previewRows: sheetRows.slice(1),
+      previewHeaders: sheetRows[0],
+      checksum: expectedHash || rosterWeightedChecksum(joined),
+      summaryLabel: `配置${entries.length}件`
     };
   }
 
@@ -11235,6 +11346,61 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       total = (total + String(text).charCodeAt(i)) % ROSTER_CHECKSUM_MOD;
     }
     return String(total);
+  }
+
+  function rosterWeightedChecksum(text){
+    let total = 0;
+    const source = String(text || "");
+    for(let i=0; i<source.length; i++){
+      total = (total + (source.charCodeAt(i) * (i + 1))) % ROSTER_CHECKSUM_MOD;
+    }
+    return String(total);
+  }
+
+  function normalizeRosterMembers(values){
+    if(!Array.isArray(values)) return [];
+    const seen = new Set();
+    return values.map(value => String(value || "").trim()).filter(value => {
+      if(!value || seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+  }
+
+  function normalizeRosterDate(value){
+    const text = String(value || "").trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+  }
+
+  function normalizeAttendanceCounts(values){
+    const result = {};
+    if(!values || typeof values !== "object" || Array.isArray(values)) return result;
+    Object.keys(values).forEach(key => {
+      const date = normalizeRosterDate(key);
+      const count = Number(values[key]);
+      if(date && Number.isInteger(count) && count >= 0){
+        result[date] = count;
+      }
+    });
+    return result;
+  }
+
+  function normalizeAttendanceMembers(values, members){
+    const result = {};
+    if(!values || typeof values !== "object" || Array.isArray(values)) return result;
+    Object.keys(values).forEach(key => {
+      const date = normalizeRosterDate(key);
+      const list = values[key];
+      if(!date || !Array.isArray(list)) return;
+      const names = list.map(item => {
+        if(Number.isInteger(item)) return members[item] || "";
+        const numberValue = Number(item);
+        if(String(item).trim() !== "" && Number.isInteger(numberValue)) return members[numberValue] || "";
+        return String(item || "").trim();
+      }).filter(Boolean);
+      if(names.length) result[date] = names;
+    });
+    return result;
   }
 
   function decodeRosterSymbolRow(code, symbols, days){
@@ -11262,21 +11428,20 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function showRosterPreview(roster){
+    const summary = roster.summaryLabel || `${roster.memberCount}人`;
     decodedPreview.innerHTML = [
       `<div class="previewTitle"><span>勤務表QR</span><span class="ok">復元完了</span></div>`,
-      `<div class="previewMeta">月: ${escapeHtml(roster.month)} / ${roster.memberCount}人 / ${roster.days}日 / 記号${roster.symbolCount}種 / Hash: ${escapeHtml(roster.checksum)}</div>`,
+      `<div class="previewMeta">${escapeHtml(roster.month)} / ${escapeHtml(summary)} / ${roster.days}日 / Hash: ${escapeHtml(roster.checksum)}</div>`,
       renderRosterPreviewTable(roster)
     ].join("");
   }
 
   function renderRosterPreviewTable(roster){
-    const dayLimit = Math.min(roster.days, 10);
     const rowLimit = Math.min(roster.previewRows.length, 10);
-    const headers = ["氏名", "種別"];
-    for(let day=1; day<=dayLimit; day++) headers.push(`${day}日`);
-    const rows = roster.previewRows.slice(0, rowLimit).map(row => row.slice(0, dayLimit + 2));
-    const more = roster.previewRows.length > rowLimit || roster.days > dayLimit
-      ? `<div class="emptyPreview">プレビューは先頭${Math.ceil(rowLimit / 2)}人・${dayLimit}日分です。Excel出力には全データを含めます。</div>`
+    const headers = (roster.previewHeaders && roster.previewHeaders.length ? roster.previewHeaders : roster.sheetRows[0]).slice(0, 12);
+    const rows = roster.previewRows.slice(0, rowLimit).map(row => row.slice(0, headers.length));
+    const more = roster.previewRows.length > rowLimit || (roster.previewHeaders || []).length > headers.length
+      ? `<div class="emptyPreview">プレビューは一部のみです。Excel出力には全データを含めます。</div>`
       : "";
     return [
       `<div class="previewTableWrap"><table><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>`,
@@ -11458,10 +11623,11 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
           : "全分割QRの受信待ち";
     }else if(hasRosterTransfer()){
       const readiness = rosterReadiness();
+      const summary = latestRoster ? (latestRoster.summaryLabel || `${latestRoster.memberCount}人`) : "";
       headerReadStatus.textContent = latestRoster ? "完了" : "受信中";
       headerReadStatus.className = latestRoster ? "counterValue ok" : "counterValue";
       headerReadNote.textContent = latestRoster ? latestRoster.month : "勤務表QRを読み取り中";
-      dataRowCount.textContent = latestRoster ? `${latestRoster.memberCount}人` : `${readStats.rosterQr}枚`;
+      dataRowCount.textContent = latestRoster ? summary : `${readStats.rosterQr}枚`;
       dataRowNote.textContent = readiness.message;
     }else{
       headerReadStatus.textContent = readStats.headers > 0 ? "済" : "未読";
@@ -11479,6 +11645,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     lastQrNote.textContent = readStats.lastNote;
     updateCopyButtonState();
     updateLiveSummary();
+    updateLiveParts();
+    updateTopControls();
   }
 
   function updateLiveSummary(){
@@ -11502,7 +11670,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     if(rosterMode){
       const group = rosterSplitGroups()[0];
       if(group) return `${group.parts.size}/${group.total}枚`;
-      return latestRoster ? `${latestRoster.memberCount}人` : `${readStats.rosterQr}枚`;
+      return latestRoster ? (latestRoster.summaryLabel || `${latestRoster.memberCount}人`) : `${readStats.rosterQr}枚`;
     }
     if(readStats.rowTotal > 0) return `${readStats.rows}/${readStats.rowTotal}行`;
     return `${readStats.total}枚`;
@@ -11523,6 +11691,34 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       return missing.length ? shortText(compactNumberList(missing), 18) : "なし";
     }
     return "-";
+  }
+
+  function currentPrimaryGroup(fileMode, rosterMode){
+    if(fileMode) return fileSplitGroups()[0] || null;
+    if(rosterMode) return rosterSplitGroups()[0] || null;
+    return Array.from(splitGroups.values())[0] || null;
+  }
+
+  function updateLiveParts(){
+    if(!liveParts) return;
+    const group = currentPrimaryGroup(hasFileTransfer(), hasRosterTransfer());
+    if(group && group.total > 0){
+      liveParts.innerHTML = Array.from({ length: group.total }, (_, index) => {
+        const partNo = index + 1;
+        const done = group.parts.has(partNo);
+        return `<div class="part ${done ? "done" : ""}">${partNo}/${group.total}</div>`;
+      }).join("");
+      return;
+    }
+    if(readStats.rowTotal > 0){
+      liveParts.innerHTML = Array.from({ length: readStats.rowTotal }, (_, index) => {
+        const rowNo = index + 1;
+        const done = readRowIds.has(String(rowNo));
+        return `<div class="part ${done ? "done" : ""}">${rowNo}/${readStats.rowTotal}</div>`;
+      }).join("");
+      return;
+    }
+    liveParts.innerHTML = `<div class="part">未読</div>`;
   }
 
   function missingRowNumbers(){
@@ -11561,6 +11757,23 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return readStats.rosterQr > 0 || rosterSplitGroups().length > 0 || !!latestRoster;
   }
 
+  function retryCompletedRosterGroups(){
+    if(latestRoster) return true;
+    for(const group of rosterSplitGroups()){
+      if(group.parts.size === group.total && !group.rosterError){
+        completeRosterGroup(group, joinGroupPayload(group));
+        if(latestRoster) return true;
+      }
+    }
+    return false;
+  }
+
+  function primaryReadiness(){
+    if(hasFileTransfer()) return fileReadiness();
+    if(hasRosterTransfer()) return rosterReadiness();
+    return copyReadiness();
+  }
+
   function fileReadiness(){
     if(!hasFileTransfer()){
       return { ok: false, message: "保存できるファイルQRがありません" };
@@ -11584,6 +11797,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     if(!hasRosterTransfer()){
       return { ok: false, message: "勤務表QRがありません" };
     }
+    retryCompletedRosterGroups();
     const incomplete = incompleteRosterSplitGroups();
     if(incomplete.length){
       const group = incomplete[0];
@@ -11592,19 +11806,24 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         message: `勤務表QRが未完了です（${group.parts.size}/${group.total}、不足: ${compactNumberList(missingNumbers(group))}）`
       };
     }
+    const failed = rosterSplitGroups().find(group => group.parts.size === group.total && group.rosterError);
+    if(failed){
+      return { ok: false, message: `勤務表QRの復元に失敗しました: ${failed.rosterError}` };
+    }
     if(!latestRoster){
       return { ok: false, message: "勤務表の検証が完了していません" };
     }
-    return { ok: true, message: `勤務表を出力できます（${latestRoster.month} / ${latestRoster.memberCount}人）` };
+    const summary = latestRoster.summaryLabel || `${latestRoster.memberCount}人`;
+    return { ok: true, message: `勤務表を出力できます（${latestRoster.month} / ${summary}）` };
   }
 
   function copyReadiness(){
-    if(!combinedText.value.trim() || !history.length){
-      return { ok: false, message: "コピー/出力できる完成データがありません" };
-    }
-
     if(hasRosterTransfer()){
       return rosterReadiness();
+    }
+
+    if(!combinedText.value.trim() || !history.length){
+      return { ok: false, message: "コピー/出力できる完成データがありません" };
     }
 
     const incomplete = incompleteSplitGroups();
@@ -11663,7 +11882,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       btnQuickExport.disabled = !quickReadiness.ok;
       btnQuickExport.textContent = quickReadiness.ok
         ? (fileMode ? "ファイル保存" : "Excel出力")
-        : "出力待ち";
+        : (fileMode ? "ファイル保存" : "Excel出力");
       btnQuickExport.title = quickReadiness.message;
     }
   }
@@ -12381,6 +12600,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   btnFileExport.addEventListener("click", (ev) => exportCompleteFile(ev.currentTarget));
   btnQuickExport.addEventListener("click", (ev) => exportQuick(ev.currentTarget));
   document.getElementById("btnReset").addEventListener("click", resetAll);
+  btnTopReset.addEventListener("click", () => resetAll());
   cameraSelect.addEventListener("change", () => {
     if(stream) startCamera();
   });
