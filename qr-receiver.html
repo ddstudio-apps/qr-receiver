@@ -81,6 +81,14 @@
   .warntext{color:var(--amber);font-weight:700}
   #status{font-weight:700;color:#153f6f}
   #diag{margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc}
+  .launchQrDialog{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.42)}
+  .launchQrPanel{width:min(100%,360px);background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;box-shadow:0 18px 42px rgba(15,23,42,.22)}
+  .launchQrHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .launchQrHead h2{margin:0}
+  .launchQrImage{display:block;width:min(100%,260px);height:auto;margin:10px auto;border:10px solid #fff;border-radius:8px;box-shadow:0 0 0 1px var(--line)}
+  .launchQrUrl{overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--muted);line-height:1.5;margin:8px 0 12px}
+  .launchQrActions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+  [hidden]{display:none!important}
   @media (max-width: 860px){
     main{grid-template-columns:1fr;padding:12px}
     select{width:100%}
@@ -100,6 +108,8 @@
     textarea{font-size:12px}
     #lastText,#combinedText{max-height:96px}
     .counterGrid{grid-template-columns:1fr 1fr}
+    .launchQrDialog{align-items:flex-start;padding-top:calc(18px + env(safe-area-inset-top))}
+    .launchQrActions button{width:100%}
   }
 </style>
 </head>
@@ -114,6 +124,7 @@
       <button id="btnStart" class="primary">カメラ開始</button>
       <button id="btnStop">停止</button>
       <button id="btnRefresh">カメラ一覧更新</button>
+      <button id="btnShowLaunchQr">QR</button>
       <select id="cameraSelect" aria-label="カメラ選択"></select>
       <span id="status">未開始</span>
     </div>
@@ -171,6 +182,19 @@
     <p class="small mono">対応形式：勤務表JSON / BNCTQR3|HDR/ROW / BNCTFILE1|FILE / BNCTHDRP1 / BNCTROWP1 / H1/5:本文 / R1/5:本文 / H0:1/1:本文 / R11:1/1:本文 / BNCTQR|001|005|本文</p>
   </section>
 </main>
+<div id="launchQrDialog" class="launchQrDialog" role="dialog" aria-modal="true" aria-labelledby="launchQrTitle" aria-hidden="true" hidden>
+  <div class="launchQrPanel">
+    <div class="launchQrHead">
+      <h2 id="launchQrTitle">このアプリを開くQR</h2>
+      <button id="btnCloseLaunchQr" aria-label="QRを閉じる">閉じる</button>
+    </div>
+    <img class="launchQrImage" src="./launch-qr.svg" alt="QR受信アプリを開くQRコード">
+    <p class="launchQrUrl">https://ddstudio-apps.github.io/qr-receiver/</p>
+    <div class="launchQrActions">
+      <button id="btnBackToCamera" class="primary">カメラ画面に戻る</button>
+    </div>
+  </div>
+</div>
 <script>
 (function webpackUniversalModuleDefinition(root, factory) {
 	if(typeof exports === 'object' && typeof module === 'object')
@@ -10303,6 +10327,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   const chunkInfo = document.getElementById("chunkInfo");
   const chunkBody = document.querySelector("#chunkTable tbody");
   const diag = document.getElementById("diag");
+  const btnShowLaunchQr = document.getElementById("btnShowLaunchQr");
+  const launchQrDialog = document.getElementById("launchQrDialog");
+  const btnCloseLaunchQr = document.getElementById("btnCloseLaunchQr");
+  const btnBackToCamera = document.getElementById("btnBackToCamera");
 
   let stream = null;
   let barcodeDetector = null;
@@ -10348,6 +10376,18 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
   function setStatus(msg){
     statusEl.textContent = msg;
+  }
+
+  function showLaunchQr(){
+    launchQrDialog.hidden = false;
+    launchQrDialog.setAttribute("aria-hidden", "false");
+    btnBackToCamera.focus();
+  }
+
+  function hideLaunchQr(){
+    launchQrDialog.hidden = true;
+    launchQrDialog.setAttribute("aria-hidden", "true");
+    btnShowLaunchQr.focus();
   }
 
   function hasMediaDevices(){
@@ -12207,6 +12247,15 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   document.getElementById("btnStart").addEventListener("click", startCamera);
   document.getElementById("btnStop").addEventListener("click", () => stopCamera(true));
   document.getElementById("btnRefresh").addEventListener("click", refreshCameras);
+  btnShowLaunchQr.addEventListener("click", showLaunchQr);
+  btnCloseLaunchQr.addEventListener("click", hideLaunchQr);
+  btnBackToCamera.addEventListener("click", hideLaunchQr);
+  launchQrDialog.addEventListener("click", (ev) => {
+    if(ev.target === launchQrDialog) hideLaunchQr();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if(ev.key === "Escape" && !launchQrDialog.hidden) hideLaunchQr();
+  });
   btnCopyCombined.addEventListener("click", (ev) => copyCompleteText(ev.currentTarget));
   btnExcelExport.addEventListener("click", (ev) => exportCompleteWorkbook(ev.currentTarget));
   btnCsvExport.addEventListener("click", (ev) => exportCompleteCsv(ev.currentTarget));
