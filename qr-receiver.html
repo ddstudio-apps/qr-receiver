@@ -86,9 +86,9 @@
   #diag{display:none;margin-top:10px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc}
   .scannerCard{display:flex;flex-direction:column;gap:8px}
   .detailsCard{display:none!important}
-  .scannerControls{margin:0;display:flex;flex-wrap:wrap;gap:10px}
-  .scannerControls button{flex:1 1 120px}
-  .scannerControls #btnQuickExport{flex:1 1 120px;width:auto}
+  .scannerControls{margin:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .scannerControls button{min-width:0;min-height:34px;padding:5px 4px;font-size:12px;line-height:1.15;font-weight:900}
+  .scannerControls #btnQuickExport{width:auto}
   .scanHud{border:1px solid #cfe0db;border-radius:8px;background:#f8fbfa;padding:10px;display:grid;gap:8px}
   .scanHudTop{display:flex;align-items:center;justify-content:space-between;gap:8px}
   .scanHudTitle{font-size:17px;font-weight:800;color:#10201d}
@@ -97,7 +97,7 @@
   .scanHudItem{min-width:0;border:1px solid #dbe7e3;border-radius:6px;background:white;padding:7px}
   .scanHudLabel{display:block;font-size:10px;color:var(--muted);font-weight:800}
   .scanHudValue{display:block;font-size:14px;font-weight:800;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .quickExport{width:100%;min-height:46px;font-size:16px;font-weight:800}
+  .quickExport{width:auto;min-height:34px;font-size:12px;font-weight:900}
   .launchQrDialog{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.42)}
   .launchQrPanel{width:min(100%,360px);background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;box-shadow:0 18px 42px rgba(15,23,42,.22)}
   .launchQrHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
@@ -119,11 +119,11 @@
     main{display:block;padding:0}
     .scannerCard{border:0;border-radius:0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:none}
     .card{border-radius:10px;padding:12px}
-    .scannerControls{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
-    .scannerControls button{flex:1 1 120px;padding:0 14px}
+    .scannerControls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:8px}
+    .scannerControls button{min-height:34px;padding:4px 3px;font-size:12px}
     .scannerControls select{grid-column:1 / -1;min-height:40px}
-    .scannerControls #status{flex:1 0 100%;font-size:13px}
-    button,select{min-height:44px;font-size:15px}
+    .scannerControls #status{grid-column:1 / -1;font-size:12px}
+    button,select{min-height:34px;font-size:12px}
     video{min-height:240px;max-height:560px;background:#0f172a}
     textarea{font-size:12px}
     #lastText,#combinedText{max-height:96px}
@@ -147,11 +147,12 @@
 <main>
   <section class="card scannerCard">
     <div class="row scannerControls">
-      <button id="btnStart" class="primary">カメラ開始</button>
-      <button id="btnStop" disabled>カメラ停止</button>
+      <button id="btnStart" class="primary">開始</button>
+      <button id="btnStop" disabled>停止</button>
       <button id="btnTopReset" disabled>クリア</button>
       <button id="btnQuickExport" class="primary quickExport" disabled>Excel出力</button>
-      <button id="btnShowLaunchQr" hidden>QR</button>
+      <button id="btnShowLaunchQr">QRリンク</button>
+      <button id="btnExit" class="warn">終了</button>
       <button id="btnRefresh" hidden>更新</button>
       <select id="cameraSelect" aria-label="カメラ選択" hidden></select>
       <span id="status">未開始</span>
@@ -10384,6 +10385,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   const btnQuickExport = document.getElementById("btnQuickExport");
   const btnTopReset = document.getElementById("btnTopReset");
   const btnShowLaunchQr = document.getElementById("btnShowLaunchQr");
+  const btnExit = document.getElementById("btnExit");
   const launchQrDialog = document.getElementById("launchQrDialog");
   const btnCloseLaunchQr = document.getElementById("btnCloseLaunchQr");
   const btnBackToCamera = document.getElementById("btnBackToCamera");
@@ -10465,6 +10467,19 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     launchQrDialog.hidden = true;
     launchQrDialog.setAttribute("aria-hidden", "true");
     btnShowLaunchQr.focus();
+  }
+
+  function exitApp(){
+    stopCamera(false);
+    setStatus("終了");
+    setState("終了しました");
+    updateDiagnostics();
+    updateTopControls();
+    setTimeout(() => {
+      try{
+        window.close();
+      }catch(e){}
+    }, 0);
   }
 
   function hasMediaDevices(){
@@ -12587,6 +12602,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   document.getElementById("btnStop").addEventListener("click", () => stopCamera(true));
   document.getElementById("btnRefresh").addEventListener("click", refreshCameras);
   btnShowLaunchQr.addEventListener("click", showLaunchQr);
+  btnExit.addEventListener("click", exitApp);
   btnCloseLaunchQr.addEventListener("click", hideLaunchQr);
   btnBackToCamera.addEventListener("click", hideLaunchQr);
   launchQrDialog.addEventListener("click", (ev) => {
