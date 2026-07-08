@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="QR受信">
+  <meta name="theme-color" content="#0f766e">
+  <title>QR受信アプリ iPhone版</title>
+  <style>
+    :root{color-scheme:light;--ink:#10201d;--muted:#5f706c;--line:#d9e5e1;--brand:#0f766e}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Yu Gothic",sans-serif;background:#eef5f3;color:var(--ink)}
+    main{max-width:720px;margin:0 auto;padding:28px 18px}
+    .panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px;box-shadow:0 10px 28px rgba(15,52,47,.08)}
+    h1{font-size:26px;line-height:1.2;margin:0 0 10px}
+    p{color:var(--muted);line-height:1.7;margin:0 0 16px}
+    a{display:flex;align-items:center;justify-content:center;min-height:52px;border-radius:10px;background:var(--brand);color:#fff;text-decoration:none;font-size:17px;font-weight:800}
+    .qr{margin-top:18px;padding:16px;border:1px solid var(--line);border-radius:10px;background:#f8fbfa;text-align:center}
+    .qr h2{margin:0 0 10px;font-size:17px}
+    .qr img{width:min(100%,260px);height:auto;border:10px solid #fff;border-radius:8px}
+    .url{overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+    .note{margin-top:18px;padding:14px;border-radius:10px;background:#f8fbfa;border:1px solid var(--line);font-size:14px;color:var(--muted)}
+  </style>
+</head>
+<body>
+<main>
+  <section class="panel">
+    <h1>QR受信アプリ iPhone版</h1>
+    <p>Windows側のQR生成アプリで出したQRを、iPhoneのカメラで読み取って受け取ります。</p>
+    <a href="./qr-receiver.html">受信アプリを開く</a>
+    <div class="qr">
+      <h2>このアプリを開くQR</h2>
+      <img src="./launch-qr.svg" alt="QR受信アプリを開くQRコード">
+      <p class="url">https://ddstudio-apps.github.io/qr-receiver/</p>
+    </div>
+    <div class="note">SafariでHTTPSのURLから開いてください。ホーム画面に追加するとアプリのように起動できます。</div>
+  </section>
+</main>
+</body>
+</html>
