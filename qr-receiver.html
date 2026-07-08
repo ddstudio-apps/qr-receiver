@@ -10471,15 +10471,26 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
   function exitApp(){
     stopCamera(false);
+    if(!launchQrDialog.hidden) hideLaunchQr();
     setStatus("終了");
     setState("終了しました");
     updateDiagnostics();
     updateTopControls();
+    try{
+      window.open("", "_self");
+    }catch(e){}
+    try{
+      window.close();
+    }catch(e){}
     setTimeout(() => {
+      if(document.hidden) return;
       try{
         window.close();
       }catch(e){}
-    }, 0);
+      try{
+        location.replace("about:blank");
+      }catch(e){}
+    }, 250);
   }
 
   function hasMediaDevices(){
