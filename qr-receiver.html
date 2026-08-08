@@ -69,6 +69,7 @@
   .parts{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin:10px 0 2px}
   .part{min-height:34px;border:1px solid var(--line);border-radius:8px;background:#f8fafc;color:var(--muted);text-align:center;font-size:.78rem;font-weight:900;line-height:34px}
   .part.done{border-color:var(--green);background:#e8f5f4;color:var(--green)}
+  .part.recent{outline:3px solid rgba(11,92,173,.28);box-shadow:0 0 0 4px rgba(11,92,173,.08)}
   .progressItem{border:1px solid #dbe4ef;border-radius:8px;padding:10px;background:#fbfdff}
   .progressHead{display:flex;justify-content:space-between;gap:10px;align-items:center;font-weight:700}
   .progressMeta{font-size:12px;color:var(--muted);margin-top:3px}
@@ -117,22 +118,23 @@
 
   .iphone-note{display:none}
   @media (max-width: 720px){
+    html,body{height:100%;overflow:hidden}
     body{background:#eef5f3}
     header{display:none}
-    main{display:block;padding:0}
-    .scannerCard{border:0;border-radius:0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:none}
+    main{display:block;height:100dvh;padding:0;overflow:hidden}
+    .scannerCard{height:100dvh;border:0;border-radius:0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:none;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:8px;overflow:hidden}
     .card{border-radius:10px;padding:12px}
     .scannerControls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:8px}
     .scannerControls button{min-height:34px;padding:4px 3px;font-size:12px}
     .scannerControls select{grid-column:1 / -1;min-height:40px}
     .scannerControls #status{grid-column:1 / -1;font-size:12px}
     button,select{min-height:34px;font-size:12px}
-    video{min-height:240px;max-height:560px;background:#0f172a}
+    video{min-height:0;max-height:42dvh;background:#0f172a}
     textarea{font-size:12px}
     #lastText,#combinedText{max-height:96px}
     .detailsCard{margin:8px}
     .counterGrid{grid-template-columns:1fr 1fr}
-    .parts{grid-template-columns:repeat(4,1fr)}
+    .parts{grid-template-columns:repeat(4,1fr);align-content:start;min-height:0;margin:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 2px 8px;scroll-padding:10px}
     .scanHud{padding:8px}
     .scanHudGrid{grid-template-columns:1fr 1fr 1fr;gap:6px}
     .scanHudItem{padding:6px}
@@ -143,11 +145,13 @@
   }
 
   @media (max-width: 720px){
+    html,body{height:100%;overflow:hidden}
     body{background:#eef5f3}
     header{display:none}
-    main{display:block;padding:0}
-    .scannerCard,.card:first-of-type{border:0;border-radius:0;padding:12px 12px calc(14px + env(safe-area-inset-bottom));box-shadow:none}
-    video{min-height:240px;max-height:58vh;background:#07110f}
+    main{display:block;height:100dvh;padding:0;overflow:hidden}
+    .scannerCard,.card:first-of-type{height:100dvh;border:0;border-radius:0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:none;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:8px;overflow:hidden}
+    video{min-height:0;max-height:42dvh;background:#07110f}
+    .parts{grid-template-columns:repeat(4,1fr);align-content:start;min-height:0;margin:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 2px 8px;scroll-padding:10px}
   }
 </style>
 </head>
@@ -10420,6 +10424,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   let latestRoster = null;
   let latestFileId = "";
   let latestHeaderMeta = { batchId: "", headerHash: "", sourceSheet: "" };
+  let pendingLivePartScroll = null;
   let readStats = {
     scanEvents: 0,
     total: 0,
@@ -10783,6 +10788,32 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     }
   }
 
+  function queueLivePartScroll(target){
+    pendingLivePartScroll = target;
+  }
+
+  function scrollLivePartsToPending(){
+    if(!pendingLivePartScroll || !liveParts) return;
+    const target = pendingLivePartScroll;
+    pendingLivePartScroll = null;
+    requestAnimationFrame(() => {
+      const cards = Array.from(liveParts.querySelectorAll(".part"));
+      const card = cards.find((item) => {
+        if(target.type === "group"){
+          return item.dataset.groupKey === target.groupKey && item.dataset.partNo === String(target.partNo);
+        }
+        if(target.type === "row"){
+          return item.dataset.rowNo === String(target.rowNo);
+        }
+        return false;
+      });
+      if(!card) return;
+      card.classList.add("recent");
+      card.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+      window.setTimeout(() => card.classList.remove("recent"), 1200);
+    });
+  }
+
   function parseSplitQR(value){
     const text = String(value).trim();
     const roster = parseRosterOuterQR(text);
@@ -11033,8 +11064,11 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     group.rosterError = "";
     group.parts.set(part.no, part);
     group.lastNo = part.no;
+    group.lastTouchedAt = Date.now();
+    queueLivePartScroll({ type: "group", groupKey: group.key, partNo: part.no });
 
     updateChunks();
+    updateReadCounters();
     if(group.parts.size === group.total){
       if(group.kind === "FILE"){
         void completeFileGroup(group, joinGroupPayload(group));
@@ -11055,6 +11089,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
   function makeSplitGroup(part){
     return {
+      key: part.key,
       kind: part.kind,
       label: part.label,
       groupId: part.groupId,
@@ -11073,7 +11108,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       rosterWeek: part.rosterWeek || "",
       rosterHash: part.rosterHash || "",
       outerApp: part.outerApp || "",
-      rosterError: ""
+      rosterError: "",
+      lastTouchedAt: 0
     };
   }
 
@@ -11611,6 +11647,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       const rowId = preview.rowNo || rowIdFromMeta(meta);
       if(rowId) readRowIds.add(rowId);
       rememberCompletedRow(preview, meta, rowId);
+      if(rowId) queueLivePartScroll({ type: "row", rowNo: rowId });
       if(Number(preview.rowTotal) > 0) readStats.rowTotal = Math.max(readStats.rowTotal, Number(preview.rowTotal));
       if(Number(meta?.rowTotal) > 0) readStats.rowTotal = Math.max(readStats.rowTotal, Number(meta.rowTotal));
       readStats.lastKind = "行データ";
@@ -11732,28 +11769,37 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function currentPrimaryGroup(fileMode, rosterMode){
-    if(fileMode) return fileSplitGroups()[0] || null;
-    if(rosterMode) return rosterSplitGroups()[0] || null;
-    return Array.from(splitGroups.values())[0] || null;
+    if(fileMode) return latestTouchedGroup(fileSplitGroups());
+    if(rosterMode) return latestTouchedGroup(rosterSplitGroups());
+    return latestTouchedGroup(Array.from(splitGroups.values()));
+  }
+
+  function latestTouchedGroup(groups){
+    return groups
+      .slice()
+      .sort((a, b) => (b.lastTouchedAt || 0) - (a.lastTouchedAt || 0) || String(a.key || a.groupId).localeCompare(String(b.key || b.groupId)))[0] || null;
   }
 
   function updateLiveParts(){
     if(!liveParts) return;
     const group = currentPrimaryGroup(hasFileTransfer(), hasRosterTransfer());
     if(group && group.total > 0){
+      const groupKey = escapeHtml(group.key || `${group.kind}|${group.groupId}`);
       liveParts.innerHTML = Array.from({ length: group.total }, (_, index) => {
         const partNo = index + 1;
         const done = group.parts.has(partNo);
-        return `<div class="part ${done ? "done" : ""}">${partNo}/${group.total}</div>`;
+        return `<div class="part ${done ? "done" : ""}" data-group-key="${groupKey}" data-part-no="${partNo}">${partNo}/${group.total}</div>`;
       }).join("");
+      scrollLivePartsToPending();
       return;
     }
     if(readStats.rowTotal > 0){
       liveParts.innerHTML = Array.from({ length: readStats.rowTotal }, (_, index) => {
         const rowNo = index + 1;
         const done = readRowIds.has(String(rowNo));
-        return `<div class="part ${done ? "done" : ""}">${rowNo}/${readStats.rowTotal}</div>`;
+        return `<div class="part ${done ? "done" : ""}" data-row-no="${rowNo}">${rowNo}/${readStats.rowTotal}</div>`;
       }).join("");
+      scrollLivePartsToPending();
       return;
     }
     liveParts.innerHTML = `<div class="part">未読</div>`;
@@ -12595,6 +12641,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     latestRoster = null;
     latestFileId = "";
     latestHeaderMeta = { batchId: "", headerHash: "", sourceSheet: "" };
+    pendingLivePartScroll = null;
     readStats = {
       scanEvents: 0,
       total: 0,
