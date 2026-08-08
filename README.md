@@ -1,8 +1,7 @@
-# QR Receiver
+# QR iPhone Web App
 
-GitHub Pages専用のQR受信Webアプリです。
+QR統合WebアプリのGitHub Pages配信用フォルダです。
 
-公開URL: https://ddstudio-apps.github.io/qr-receiver/
-
-外来業務のGitHub Pagesとは別リポジトリで公開しています。
-
+入口: https://ddstudio-apps.github.io/qr-receiver/
+生成: https://ddstudio-apps.github.io/qr-receiver/qr-generator.html
+読み取り: https://ddstudio-apps.github.io/qr-receiver/qr-receiver.html

@@ -1,12 +1,15 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="QR受信">
+    <meta name="theme-color" content="#0f766e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="QR受信">
 <meta name="theme-color" content="#0f766e">
-<title>QRデータ受信・Excel出力ツール（ローカル版 v2）</title>
+<title>QR読み取り・復元 iPhone版</title>
 <style>
   :root{
     color-scheme: light;
@@ -137,6 +140,14 @@
     .scanHudValue{font-size:13px}
     .launchQrDialog{align-items:flex-start;padding-top:calc(18px + env(safe-area-inset-top))}
     .launchQrActions button{width:100%}
+  }
+
+  @media (max-width: 720px){
+    body{background:#eef5f3}
+    header{display:none}
+    main{display:block;padding:0}
+    .scannerCard,.card:first-of-type{border:0;border-radius:0;padding:12px 12px calc(14px + env(safe-area-inset-bottom));box-shadow:none}
+    video{min-height:240px;max-height:58vh;background:#07110f}
   }
 </style>
 </head>
