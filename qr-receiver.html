@@ -10414,6 +10414,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   let lastScanAt = 0;
   let history = [];
   let splitGroups = new Map();
+  const splitViews = new Map();
+  let livePartsGroup = null;
+  let pageTransfer = null;
   let latestHeaders = [];
   let countedRawQrs = new Set();
   let countedLogicalQrs = new Set();
@@ -10711,11 +10714,21 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function handleQR(value){
+    value = String(value).trim();
+    if(!value) return;
     const now = Date.now();
     if(value === lastSeen && now - lastSeenAt < 1800) return;
     lastSeen = value;
     lastSeenAt = now;
     lastText.value = value;
+    if(value.startsWith("BNCTPAGE1|")){
+      receiveNumberedPage(value);
+      return;
+    }
+    if(pageTransfer){
+      setState("別形式のQRです。現在の読み取りを保持しました。", false);
+      return;
+    }
     const isNewRaw = recordRawQr(value);
     if(!isNewRaw){
       const readiness = primaryReadiness();
@@ -10725,10 +10738,43 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     parseAndStore(value);
   }
 
-  function recordRawQr(value){
-    const text = String(value).trim();
-    if(!text) return false;
-    const split = parseSplitQR(text);
+  function receiveNumberedPage(value){
+    const match = value.match(/^BNCTPAGE1\|([a-f0-9]{16})\|([1-9]\d*)\|([1-9]\d*)\|(.+)$/s);
+    if(!match || Number(match[3]) > 1000000 || Number(match[2]) > Number(match[3])){
+      setState("ページ情報が不正なQRです", false);
+      return;
+    }
+    const [, session, number, count, payload] = match;
+    const no = Number(number);
+    const total = Number(count);
+    const part = parseSplitQR(payload);
+    if(!part || !["BNCTQR3", "BNCTFILE1"].includes(part.format)){
+      setState("ページ内のQR形式を確認できません", false);
+      return;
+    }
+    if(pageTransfer && (pageTransfer.session !== session || pageTransfer.total !== total)){
+      setState("別のデータのQRです。現在の読み取りを保持しました。新しい転送はリセット後に開始してください。", false);
+      return;
+    }
+    if(!pageTransfer && countedRawQrs.size){
+      setState("旧形式の読み取りと混在できません。現在のデータを保存してからリセットしてください。", false);
+      return;
+    }
+    const previous = pageTransfer?.received.get(no);
+    if(previous !== undefined && previous !== payload){
+      setState("同じページ番号の内容が異なります。元のQRを確認してください。", false);
+      return;
+    }
+    if(!countedRawQrs.has(payload) && !storeSplitPart(part)) return;
+    if(!pageTransfer) pageTransfer = { session, total, received: new Map() };
+    pageTransfer.received.set(no, payload);
+    if(!recordRawQr(payload, part)){
+      const readiness = primaryReadiness();
+      setState(readiness.ok ? readiness.message : `ページ${no}は読み取り済みです（加算なし）`, readiness.ok);
+    }
+  }
+
+  function recordRawQr(text, split = parseSplitQR(text)){
     const kindInfo = classifyQrText(text, split);
     readStats.scanEvents += 1;
 
@@ -10783,7 +10829,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       if(!history.includes(value)) history.push(value);
       combinedText.value = history.join("\n");
       showDecodedPreview(value);
-      updateChunks();
+      updateChunkInfo();
+      updateCopyButtonState();
       setState("通常QRを読み取りました");
     }
   }
@@ -10797,17 +10844,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     const target = pendingLivePartScroll;
     pendingLivePartScroll = null;
     requestAnimationFrame(() => {
-      const cards = Array.from(liveParts.querySelectorAll(".part"));
-      const card = cards.find((item) => {
-        if(target.type === "group"){
-          return item.dataset.groupKey === target.groupKey && item.dataset.partNo === String(target.partNo);
-        }
-        if(target.type === "row"){
-          return item.dataset.rowNo === String(target.rowNo);
-        }
-        return false;
-      });
-      if(!card) return;
+      const card = liveParts.children[(target.partNo ?? target.rowNo) - 1];
+      if(!card || (target.type === "group" && card.dataset.groupKey !== target.groupKey)) return;
+      if(target.type === "row" && card.dataset.rowNo !== String(target.rowNo)) return;
       card.classList.add("recent");
       card.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
       window.setTimeout(() => card.classList.remove("recent"), 1200);
@@ -11036,7 +11075,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   function storeSplitPart(part){
     if(part.no < 1 || part.total < 1 || part.no > part.total){
       setState("分割番号が不正です", false);
-      return;
+      return false;
     }
 
     let group = splitGroups.get(part.key);
@@ -11054,12 +11093,12 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         splitGroups.set(part.key, group);
       }else{
         setState(`${part.label}の総分割数が途中で変わりました`, false);
-        return;
+        return false;
       }
     }
     if(group.parts.has(part.no) && group.parts.get(part.no).payload !== part.payload){
       setState(`${part.label} ${part.no}/${part.total} の内容が前回と異なります`, false);
-      return;
+      return false;
     }
     group.rosterError = "";
     group.parts.set(part.no, part);
@@ -11067,7 +11106,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     group.lastTouchedAt = Date.now();
     queueLivePartScroll({ type: "group", groupKey: group.key, partNo: part.no });
 
-    updateChunks();
+    updateSplitProgress(group, part);
     updateReadCounters();
     if(group.parts.size === group.total){
       if(group.kind === "FILE"){
@@ -11085,6 +11124,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     }else{
       setState(`${part.label} 読み取り中：${group.parts.size}/${group.total}`);
     }
+    return true;
   }
 
   function makeSplitGroup(part){
@@ -11533,40 +11573,61 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return missing;
   }
 
-  function updateChunks(){
-    chunkBody.innerHTML = "";
-    splitSummary.innerHTML = "";
+  function updateChunkInfo(){
+    chunkInfo.textContent = splitGroups.size
+      ? `${splitGroups.size}グループを受信中`
+      : history.length ? "分割QR未検出（通常QR履歴あり）" : "分割QR未検出";
+  }
 
-    if(splitGroups.size === 0){
-      chunkInfo.textContent = history.length ? "分割QR未検出（通常QR履歴あり）" : "分割QR未検出";
-      updateCopyButtonState();
-      return;
+  function createSplitView(key, group){
+    const previous = splitViews.get(key);
+    if(previous){
+      previous.item.remove();
+      for(const row of previous.rows) row.remove();
     }
 
-    const groups = Array.from(splitGroups.values()).sort((a, b) => `${a.kind}${a.groupId}`.localeCompare(`${b.kind}${b.groupId}`));
-    chunkInfo.textContent = `${groups.length}グループを受信中`;
-
-    for(const group of groups){
-      const missing = missingNumbers(group);
-      const complete = missing.length === 0;
-      const percent = Math.round((group.parts.size / group.total) * 100);
-      const item = document.createElement("div");
-      item.className = "progressItem";
-      item.innerHTML = [
-        `<div class="progressHead"><span>${escapeHtml(group.label)}</span><span class="${complete ? "ok" : "warntext"}">${group.parts.size}/${group.total}</span></div>`,
-        `<div class="progressMeta">グループ: ${escapeHtml(group.groupId)} / 最後: ${group.lastNo ? `${group.lastNo}/${group.total}` : "-"}</div>`,
-        `<div class="progressBar"><div class="progressFill ${complete ? "done" : ""}" style="width:${percent}%"></div></div>`,
-        complete ? `<div class="doneText">全パーツ受信済み</div>` : `<div class="missing">不足: ${escapeHtml(compactNumberList(missing))}</div>`
-      ].join("");
-      splitSummary.appendChild(item);
-
-      for(let i=1; i<=group.total; i++){
-        const tr = document.createElement("tr");
-        const part = group.parts.get(i);
-        tr.innerHTML = `<td>${escapeHtml(group.label)}</td><td>${String(i).padStart(3,"0")}</td><td class="${part ? "ok" : "ng"}">${part ? "済" : "未"}</td><td>${part ? escapeHtml(part.payload.slice(0, 40)) : ""}</td>`;
-        chunkBody.appendChild(tr);
-      }
+    const item = document.createElement("div");
+    item.className = "progressItem";
+    const rows = [];
+    const fragment = document.createDocumentFragment();
+    const label = escapeHtml(group.label);
+    for(let i=1; i<=group.total; i++){
+      const row = document.createElement("tr");
+      row.innerHTML = `<td>${label}</td><td>${String(i).padStart(3,"0")}</td><td class="ng">未</td><td></td>`;
+      rows.push(row);
+      fragment.appendChild(row);
     }
+
+    const view = { group, item, rows };
+    splitViews.set(key, view);
+    const ordered = Array.from(splitViews.values()).sort((a, b) =>
+      `${a.group.kind}${a.group.groupId}`.localeCompare(`${b.group.kind}${b.group.groupId}`)
+    );
+    const next = ordered[ordered.indexOf(view) + 1];
+    splitSummary.insertBefore(item, next?.item ?? null);
+    chunkBody.insertBefore(fragment, next?.rows[0] ?? null);
+    updateChunkInfo();
+    return view;
+  }
+
+  function updateSplitProgress(group, part){
+    let view = splitViews.get(part.key);
+    if(view?.group !== group) view = createSplitView(part.key, group);
+
+    const row = view.rows[part.no - 1];
+    row.cells[2].className = "ok";
+    row.cells[2].textContent = "済";
+    row.cells[3].textContent = part.payload.slice(0, 40);
+
+    const missing = missingNumbers(group);
+    const complete = missing.length === 0;
+    const percent = Math.round((group.parts.size / group.total) * 100);
+    view.item.innerHTML = [
+      `<div class="progressHead"><span>${escapeHtml(group.label)}</span><span class="${complete ? "ok" : "warntext"}">${group.parts.size}/${group.total}</span></div>`,
+      `<div class="progressMeta">グループ: ${escapeHtml(group.groupId)} / 最後: ${group.lastNo ? `${group.lastNo}/${group.total}` : "-"}</div>`,
+      `<div class="progressBar"><div class="progressFill ${complete ? "done" : ""}" style="width:${percent}%"></div></div>`,
+      complete ? `<div class="doneText">全パーツ受信済み</div>` : `<div class="missing">不足: ${escapeHtml(compactNumberList(missing))}</div>`
+    ].join("");
     updateCopyButtonState();
   }
 
@@ -11737,6 +11798,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function liveProgressText(fileMode, rosterMode){
+    if(pageTransfer) return `${pageTransfer.received.size}/${pageTransfer.total}枚`;
     if(fileMode){
       const group = fileSplitGroups()[0];
       if(group) return `${group.parts.size}/${group.total}枚`;
@@ -11752,6 +11814,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function liveMissingText(fileMode, rosterMode, readiness){
+    if(pageTransfer){
+      const remaining = pageTransfer.total - pageTransfer.received.size;
+      return remaining ? `${remaining}枚` : "なし";
+    }
     if(readiness.ok) return "なし";
     if(fileMode){
       const group = incompleteFileSplitGroups()[0];
@@ -11784,15 +11850,21 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     if(!liveParts) return;
     const group = currentPrimaryGroup(hasFileTransfer(), hasRosterTransfer());
     if(group && group.total > 0){
-      const groupKey = escapeHtml(group.key || `${group.kind}|${group.groupId}`);
-      liveParts.innerHTML = Array.from({ length: group.total }, (_, index) => {
-        const partNo = index + 1;
-        const done = group.parts.has(partNo);
-        return `<div class="part ${done ? "done" : ""}" data-group-key="${groupKey}" data-part-no="${partNo}">${partNo}/${group.total}</div>`;
-      }).join("");
+      if(livePartsGroup !== group){
+        livePartsGroup = group;
+        const groupKey = escapeHtml(group.key || `${group.kind}|${group.groupId}`);
+        liveParts.innerHTML = Array.from({ length: group.total }, (_, index) => {
+          const partNo = index + 1;
+          const done = group.parts.has(partNo);
+          return `<div class="part ${done ? "done" : ""}" data-group-key="${groupKey}" data-part-no="${partNo}">${partNo}/${group.total}</div>`;
+        }).join("");
+      }else if(pendingLivePartScroll?.type === "group" && pendingLivePartScroll.groupKey === group.key){
+        liveParts.children[pendingLivePartScroll.partNo - 1]?.classList.add("done");
+      }
       scrollLivePartsToPending();
       return;
     }
+    livePartsGroup = null;
     if(readStats.rowTotal > 0){
       liveParts.innerHTML = Array.from({ length: readStats.rowTotal }, (_, index) => {
         const rowNo = index + 1;
@@ -11858,7 +11930,14 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return copyReadiness();
   }
 
+  function pageReadiness(){
+    const remaining = pageTransfer ? pageTransfer.total - pageTransfer.received.size : 0;
+    return remaining ? { ok: false, message: `未読ページがあります（残り${remaining}枚）` } : { ok: true };
+  }
+
   function fileReadiness(){
+    const pages = pageReadiness();
+    if(!pages.ok) return pages;
     if(!hasFileTransfer()){
       return { ok: false, message: "保存できるファイルQRがありません" };
     }
@@ -11902,6 +11981,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function copyReadiness(){
+    const pages = pageReadiness();
+    if(!pages.ok) return pages;
     if(hasRosterTransfer()){
       return rosterReadiness();
     }
@@ -12631,6 +12712,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     lastSeenAt = 0;
     history = [];
     splitGroups = new Map();
+    splitViews.clear();
+    chunkBody.replaceChildren();
+    splitSummary.replaceChildren();
+    pageTransfer = null;
     latestHeaders = [];
     countedRawQrs = new Set();
     countedLogicalQrs = new Set();
@@ -12662,7 +12747,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     lastText.value = "";
     combinedText.value = "";
     decodedPreview.innerHTML = `<div class="emptyPreview">QRを読むと、日本語に復元したヘッダーや行データをここに表示します。全件そろうとExcelファイルとして出力できます。</div>`;
-    updateChunks();
+    updateChunkInfo();
     updateReadCounters();
     setState("リセットしました");
   }
