@@ -101,6 +101,14 @@
   .scanHudItem{min-width:0;border:1px solid #dbe7e3;border-radius:6px;background:white;padding:7px}
   .scanHudLabel{display:block;font-size:10px;color:var(--muted);font-weight:800}
   .scanHudValue{display:block;font-size:14px;font-weight:800;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .scanHudMissing{width:100%;color:inherit;text-align:left;border-color:#a9c8bf}
+  .scanHudMissing .scanHudLabel{display:flex;justify-content:space-between;align-items:center}
+  .missingListDialog{width:min(360px,calc(100% - 28px));max-height:min(440px,75vh);max-height:min(440px,75dvh);overflow:hidden;border:1px solid var(--line);border-radius:10px;padding:14px;color:var(--ink);background:white}
+  .missingListDialog[open]{display:grid;grid-template-rows:auto minmax(0,1fr);gap:10px}
+  .missingListDialog::backdrop{background:rgba(15,23,42,.42)}
+  .missingListHead{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .missingListHead h2{margin:0}
+  .missingListText{margin:0;overflow:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;font-size:15px;font-variant-numeric:tabular-nums}
   .quickExport{width:auto;min-height:34px;font-size:12px;font-weight:900}
   .launchQrDialog{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.42)}
   .launchQrPanel{width:min(100%,360px);background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;box-shadow:0 18px 42px rgba(15,23,42,.22)}
@@ -185,10 +193,10 @@
           <span class="scanHudLabel">進捗</span>
           <span id="liveProgress" class="scanHudValue">0枚</span>
         </div>
-        <div class="scanHudItem">
-          <span class="scanHudLabel">不足</span>
+        <button id="btnMissingList" type="button" class="scanHudItem scanHudMissing" aria-haspopup="dialog" aria-controls="missingListDialog">
+          <span class="scanHudLabel">不足 <span aria-hidden="true">›</span></span>
           <span id="liveMissing" class="scanHudValue">-</span>
-        </div>
+        </button>
         <div class="scanHudItem">
           <span class="scanHudLabel">最後</span>
           <span id="liveLast" class="scanHudValue">-</span>
@@ -246,6 +254,13 @@
     <p class="small mono">対応形式：勤務表JSON / BNCTQR3|HDR/ROW / BNCTFILE1|FILE / BNCTHDRP1 / BNCTROWP1 / H1/5:本文 / R1/5:本文 / H0:1/1:本文 / R11:1/1:本文 / BNCTQR|001|005|本文</p>
   </section>
 </main>
+<dialog id="missingListDialog" class="missingListDialog" aria-labelledby="missingListTitle">
+  <div class="missingListHead">
+    <h2 id="missingListTitle">未読番号</h2>
+    <form method="dialog"><button autofocus>閉じる</button></form>
+  </div>
+  <p id="missingListText" class="missingListText" tabindex="0"></p>
+</dialog>
 <div id="launchQrDialog" class="launchQrDialog" role="dialog" aria-modal="true" aria-labelledby="launchQrTitle" aria-hidden="true" hidden>
   <div class="launchQrPanel">
     <div class="launchQrHead">
@@ -10395,6 +10410,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   const liveStatus = document.getElementById("liveStatus");
   const liveProgress = document.getElementById("liveProgress");
   const liveMissing = document.getElementById("liveMissing");
+  const btnMissingList = document.getElementById("btnMissingList");
+  const missingListDialog = document.getElementById("missingListDialog");
+  const missingListText = document.getElementById("missingListText");
   const liveLast = document.getElementById("liveLast");
   const liveParts = document.getElementById("liveParts");
   const btnQuickExport = document.getElementById("btnQuickExport");
@@ -11795,6 +11813,37 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     liveProgress.textContent = liveProgressText(fileMode, rosterMode);
     liveMissing.textContent = liveMissingText(fileMode, rosterMode, readiness);
     liveLast.textContent = readStats.lastKind === "-" ? "-" : shortText(`${readStats.lastKind} ${readStats.lastNote}`, 18);
+    if(missingListDialog.open) updateMissingList(fileMode, rosterMode, readiness);
+  }
+
+  function updateMissingList(fileMode, rosterMode, readiness){
+    const format = numbers => compactNumberList(numbers).replace(/,/g, ", ");
+    let text;
+    if(pageTransfer){
+      const { total, received } = pageTransfer;
+      const missing = missingNumbers({ total, parts: received });
+      text = missing.length
+        ? `通し番号・残り${missing.length}枚\n${format(missing)}`
+        : `通し番号の未読はありません。${readiness.ok ? "" : `\n${readiness.message}`}`;
+    }else{
+      const groups = fileMode ? incompleteFileSplitGroups() : rosterMode ? incompleteRosterSplitGroups() : incompleteSplitGroups();
+      const sections = [];
+      if(!fileMode && !rosterMode && readStats.rowTotal > 0){
+        const rows = missingRowNumbers();
+        if(rows.length) sections.push(`未完了の行番号\n${format(rows)}`);
+        if(!readStats.headers && !groups.some(group => group.kind === "HDR")) sections.push("ヘッダーQR：未読");
+      }
+      for(const group of groups){
+        const label = group.fileName || (group.kind === "ROW" && group.rowNo ? `行${group.rowNo}` : group.label);
+        const id = groups.length > 1 ? `（${group.groupId}）` : "";
+        sections.push(`${label}${id}・分割番号\n${format(missingNumbers(group))}`);
+      }
+      text = sections.length ? sections.join("\n\n")
+        : readiness.ok ? "未読番号はありません。"
+        : readStats.total ? `未読番号を特定できません。\n${readiness.message}`
+        : "QRを読み取ると、未読番号がここに表示されます。";
+    }
+    if(missingListText.textContent !== text) missingListText.textContent = text;
   }
 
   function liveProgressText(fileMode, rosterMode){
@@ -12756,6 +12805,12 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   document.getElementById("btnStop").addEventListener("click", () => stopCamera(true));
   document.getElementById("btnRefresh").addEventListener("click", refreshCameras);
   btnShowLaunchQr.addEventListener("click", showLaunchQr);
+  btnMissingList.addEventListener("click", () => {
+    if(missingListDialog.open) return;
+    missingListDialog.showModal();
+    missingListText.scrollTop = 0;
+    updateLiveSummary();
+  });
   btnExit.addEventListener("click", exitApp);
   btnCloseLaunchQr.addEventListener("click", hideLaunchQr);
   btnBackToCamera.addEventListener("click", hideLaunchQr);
