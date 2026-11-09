@@ -10738,33 +10738,45 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     if(value === lastSeen && now - lastSeenAt < 1800) return;
     lastSeen = value;
     lastSeenAt = now;
-    lastText.value = value;
     if(value.startsWith("BNCTPAGE1|")){
       receiveNumberedPage(value);
       return;
     }
     if(pageTransfer){
+      lastText.value = value;
       setState("別形式のQRです。現在の読み取りを保持しました。", false);
       return;
     }
-    const isNewRaw = recordRawQr(value);
-    if(!isNewRaw){
-      const readiness = primaryReadiness();
-      setState(readiness.ok ? readiness.message : "重複QRを読み取りました（加算なし）", readiness.ok);
+    if(countedRawQrs.has(value)){
+      countSkippedDuplicate();
       return;
     }
+    lastText.value = value;
+    recordRawQr(value);
     parseAndStore(value);
+  }
+
+  function countSkippedDuplicate(){
+    // Keep diagnostic counts without touching the UI until the next new read.
+    readStats.scanEvents += 1;
+    readStats.duplicates += 1;
   }
 
   function receiveNumberedPage(value){
     const match = value.match(/^BNCTPAGE1\|([a-f0-9]{16})\|([1-9]\d*)\|([1-9]\d*)\|(.+)$/s);
     if(!match || Number(match[3]) > 1000000 || Number(match[2]) > Number(match[3])){
+      lastText.value = value;
       setState("ページ情報が不正なQRです", false);
       return;
     }
     const [, session, number, count, payload] = match;
     const no = Number(number);
     const total = Number(count);
+    if(pageTransfer?.session === session && pageTransfer.total === total && pageTransfer.received.get(no) === payload){
+      countSkippedDuplicate();
+      return;
+    }
+    lastText.value = value;
     const part = parseSplitQR(payload);
     if(!part || !["BNCTQR3", "BNCTFILE1"].includes(part.format)){
       setState("ページ内のQR形式を確認できません", false);
