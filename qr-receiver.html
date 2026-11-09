@@ -10446,6 +10446,13 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   let latestFileId = "";
   let latestHeaderMeta = { batchId: "", headerHash: "", sourceSheet: "" };
   let pendingLivePartScroll = null;
+  const READ_UI_INTERVAL = 250;
+  const pendingReadPaints = new Map();
+  const pendingSplitPaints = new Map();
+  let readUiTimer = null;
+  let readCountersPending = false;
+  let receivingQr = false;
+  let flushAfterReceive = false;
   let readStats = {
     scanEvents: 0,
     total: 0,
@@ -10469,11 +10476,56 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
   }
 
-  function setState(msg, ok=true){
+  function scheduleReadUi(){
+    if(readUiTimer === null) readUiTimer = window.setTimeout(flushReadUi, READ_UI_INTERVAL);
+  }
+
+  function queueReadPaint(key, paint){
+    pendingReadPaints.set(key, paint);
+    scheduleReadUi();
+  }
+
+  function queueReadCounters(){
+    readCountersPending = true;
+    scheduleReadUi();
+  }
+
+  function flushReadUi(){
+    if(readUiTimer !== null) window.clearTimeout(readUiTimer);
+    readUiTimer = null;
+    const paints = Array.from(pendingReadPaints.values());
+    const splits = new Map(pendingSplitPaints);
+    const counters = readCountersPending;
+    pendingReadPaints.clear();
+    pendingSplitPaints.clear();
+    readCountersPending = false;
+    for(const [key, { group, parts }] of splits){
+      if(splitGroups.get(key) === group) updateSplitProgress(group, parts);
+    }
+    for(const paint of paints) paint();
+    if(counters) updateReadCounters(splits);
+    return counters;
+  }
+
+  function finishReadUi(){
+    if(receivingQr) flushAfterReceive = true;
+    else flushReadUi();
+  }
+
+  function paintReadState(msg, ok){
     readState.textContent = msg;
     readState.className = ok ? "ok" : "ng";
     livePrimary.textContent = shortText(msg, 34);
     livePrimary.className = ok ? "scanHudTitle" : "scanHudTitle ng";
+  }
+
+  function setState(msg, ok=true){
+    if(receivingQr && ok){
+      queueReadPaint("state", () => paintReadState(msg, ok));
+    }else{
+      pendingReadPaints.delete("state");
+      paintReadState(msg, ok);
+    }
   }
 
   function setStatus(msg){
@@ -10678,6 +10730,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       stream = null;
     }
     video.srcObject = null;
+    flushReadUi();
     if(showState){
       setStatus("停止中");
       setState("停止しました");
@@ -10705,6 +10758,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
   async function scanLoop(){
     if(!stream || !decoderName) return;
+    const activeStream = stream;
     const now = performance.now();
     if(now - lastScanAt >= 0 && video.readyState >= 2 && video.videoWidth && video.videoHeight){
       lastScanAt = now;
@@ -10716,6 +10770,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         let value = "";
         if(barcodeDetector){
           const codes = await barcodeDetector.detect(canvas);
+          if(stream !== activeStream) return;
           if(codes && codes.length) value = (codes[0].rawValue || "").trim();
         }else if(hasJsQR()){
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -10725,6 +10780,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
         if(value) handleQR(value);
       }catch(e){
+        if(stream !== activeStream) return;
         setState("読み取り処理でエラー: " + (e.message || e), false);
       }
     }
@@ -10738,12 +10794,25 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     if(value === lastSeen && now - lastSeenAt < 1800) return;
     lastSeen = value;
     lastSeenAt = now;
+    receivingQr = true;
+    try{
+      acceptQr(value);
+    }finally{
+      receivingQr = false;
+      if(flushAfterReceive){
+        flushAfterReceive = false;
+        flushReadUi();
+      }
+    }
+  }
+
+  function acceptQr(value){
     if(value.startsWith("BNCTPAGE1|")){
       receiveNumberedPage(value);
       return;
     }
     if(pageTransfer){
-      lastText.value = value;
+      queueReadPaint("lastText", () => { lastText.value = value; });
       setState("別形式のQRです。現在の読み取りを保持しました。", false);
       return;
     }
@@ -10751,9 +10820,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       countSkippedDuplicate();
       return;
     }
-    lastText.value = value;
+    queueReadPaint("lastText", () => { lastText.value = value; });
     recordRawQr(value);
     parseAndStore(value);
+    if(readStats.headers && readStats.rowTotal > 0 && readRowIds.size === readStats.rowTotal && copyReadiness().ok) finishReadUi();
   }
 
   function countSkippedDuplicate(){
@@ -10765,7 +10835,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   function receiveNumberedPage(value){
     const match = value.match(/^BNCTPAGE1\|([a-f0-9]{16})\|([1-9]\d*)\|([1-9]\d*)\|(.+)$/s);
     if(!match || Number(match[3]) > 1000000 || Number(match[2]) > Number(match[3])){
-      lastText.value = value;
+      queueReadPaint("lastText", () => { lastText.value = value; });
       setState("ページ情報が不正なQRです", false);
       return;
     }
@@ -10776,7 +10846,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       countSkippedDuplicate();
       return;
     }
-    lastText.value = value;
+    queueReadPaint("lastText", () => { lastText.value = value; });
     const part = parseSplitQR(payload);
     if(!part || !["BNCTQR3", "BNCTFILE1"].includes(part.format)){
       setState("ページ内のQR形式を確認できません", false);
@@ -10802,6 +10872,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       const readiness = primaryReadiness();
       setState(readiness.ok ? readiness.message : `ページ${no}は読み取り済みです（加算なし）`, readiness.ok);
     }
+    if(pageTransfer.received.size === total) finishReadUi();
   }
 
   function recordRawQr(text, split = parseSplitQR(text)){
@@ -10812,7 +10883,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       readStats.duplicates += 1;
       readStats.lastKind = kindInfo.label;
       readStats.lastNote = `${kindInfo.note} / 重複`;
-      updateReadCounters();
+      queueReadCounters();
       return false;
     }
 
@@ -10831,7 +10902,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     }
     readStats.lastKind = kindInfo.label;
     readStats.lastNote = kindInfo.note;
-    updateReadCounters();
+    queueReadCounters();
     return true;
   }
 
@@ -10857,10 +10928,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       storeSplitPart(split);
     }else{
       if(!history.includes(value)) history.push(value);
-      combinedText.value = history.join("\n");
+      queueReadPaint("combinedText", () => { combinedText.value = history.join("\n"); });
       showDecodedPreview(value);
-      updateChunkInfo();
-      updateCopyButtonState();
+      queueReadPaint("chunkInfo", updateChunkInfo);
       setState("通常QRを読み取りました");
     }
   }
@@ -11136,8 +11206,13 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     group.lastTouchedAt = Date.now();
     queueLivePartScroll({ type: "group", groupKey: group.key, partNo: part.no });
 
-    updateSplitProgress(group, part);
-    updateReadCounters();
+    let pending = pendingSplitPaints.get(part.key);
+    if(pending?.group !== group){
+      pending = { group, parts: new Map() };
+      pendingSplitPaints.set(part.key, pending);
+    }
+    pending.parts.set(part.no, part);
+    queueReadCounters();
     if(group.parts.size === group.total){
       if(group.kind === "FILE"){
         void completeFileGroup(group, joinGroupPayload(group));
@@ -11147,9 +11222,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         const joined = buildJoinedText(group);
         completedSplitMeta.set(joined, groupMeta(group));
         if(!history.includes(joined)) history.push(joined);
-        combinedText.value = history.join("\n");
+        queueReadPaint("combinedText", () => { combinedText.value = history.join("\n"); });
         showDecodedPreview(joined);
         setState(`${part.label} 完了：${group.total}/${group.total} を読み取りました`);
+        if(group.kind === "GEN") finishReadUi();
       }
     }else{
       setState(`${part.label} 読み取り中：${group.parts.size}/${group.total}`);
@@ -11262,7 +11338,8 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       latestFileId = fileId;
       showDecodedFilePreview(completedFiles.get(fileId));
       setState(`${group.label} 完了済みです`);
-      updateReadCounters();
+      queueReadCounters();
+      finishReadUi();
       return;
     }
 
@@ -11271,15 +11348,18 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       const expectedSize = Number(group.byteSize || 0);
       if(expectedSize > 0 && bytes.length !== expectedSize){
         setState(`ファイルサイズが一致しません（${bytes.length}/${expectedSize} bytes）`, false);
-        updateCopyButtonState();
+        queueReadCounters();
+        finishReadUi();
         return;
       }
 
       const actualSha256 = await sha256HexBytes(bytes);
+      if(splitGroups.get(group.key) !== group) return;
       const expectedSha256 = String(group.sha256 || "").toLowerCase();
       if(expectedSha256 && actualSha256 !== expectedSha256){
         setState("ファイル検証に失敗しました（SHA-256不一致）", false);
-        updateCopyButtonState();
+        queueReadCounters();
+        finishReadUi();
         return;
       }
 
@@ -11300,13 +11380,16 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       readStats.lastNote = `${fileInfo.fileName} / ${fileInfo.byteSize.toLocaleString("ja-JP")} bytes`;
       const marker = `[FILE] ${fileInfo.fileName} (${fileInfo.byteSize} bytes)`;
       if(!history.includes(marker)) history.push(marker);
-      combinedText.value = history.join("\n");
+      queueReadPaint("combinedText", () => { combinedText.value = history.join("\n"); });
       showDecodedFilePreview(fileInfo);
       setState(`ファイル受信完了：${fileInfo.fileName}`);
-      updateReadCounters();
+      queueReadCounters();
+      finishReadUi();
     }catch(e){
+      if(splitGroups.get(group.key) !== group) return;
       setState("ファイル復元に失敗しました: " + (e.message || e), false);
-      updateCopyButtonState();
+      queueReadCounters();
+      finishReadUi();
     }
   }
 
@@ -11324,14 +11407,16 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       readStats.lastNote = `${roster.month} / ${summary} / ${roster.days}日`;
       const marker = `[ROSTER] ${roster.month} (${summary} ${roster.days}日)`;
       history = [marker, JSON.stringify(roster.inner, null, 2)];
-      combinedText.value = history.join("\n");
-      showRosterPreview(roster);
+      queueReadPaint("combinedText", () => { combinedText.value = history.join("\n"); });
+      queueReadPaint("preview", () => showRosterPreview(roster));
       setState(`勤務表QR 復元完了：${roster.month} / ${summary}`);
-      updateReadCounters();
+      queueReadCounters();
+      finishReadUi();
     }catch(e){
       group.rosterError = e.message || String(e);
       setState("勤務表QRの復元に失敗しました: " + group.rosterError, false);
-      updateReadCounters();
+      queueReadCounters();
+      finishReadUi();
     }
   }
 
@@ -11640,14 +11725,16 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return view;
   }
 
-  function updateSplitProgress(group, part){
-    let view = splitViews.get(part.key);
-    if(view?.group !== group) view = createSplitView(part.key, group);
+  function updateSplitProgress(group, parts){
+    let view = splitViews.get(group.key);
+    if(view?.group !== group) view = createSplitView(group.key, group);
 
-    const row = view.rows[part.no - 1];
-    row.cells[2].className = "ok";
-    row.cells[2].textContent = "済";
-    row.cells[3].textContent = part.payload.slice(0, 40);
+    for(const part of parts.values()){
+      const row = view.rows[part.no - 1];
+      row.cells[2].className = "ok";
+      row.cells[2].textContent = "済";
+      row.cells[3].textContent = part.payload.slice(0, 40);
+    }
 
     const missing = missingNumbers(group);
     const complete = missing.length === 0;
@@ -11658,7 +11745,6 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       `<div class="progressBar"><div class="progressFill ${complete ? "done" : ""}" style="width:${percent}%"></div></div>`,
       complete ? `<div class="doneText">全パーツ受信済み</div>` : `<div class="missing">不足: ${escapeHtml(compactNumberList(missing))}</div>`
     ].join("");
-    updateCopyButtonState();
   }
 
   function compactNumberList(numbers){
@@ -11683,8 +11769,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   function showDecodedPreview(qrText){
     const preview = decodeBnctQr(qrText);
     if(!preview){
-      decodedPreview.innerHTML = `<div class="emptyPreview">このQRは日本語プレビュー対象外です。確認用の文字列としては保持しています。</div>`;
-      updateReadCounters();
+      queueReadPaint("preview", () => {
+        decodedPreview.innerHTML = `<div class="emptyPreview">このQRは日本語プレビュー対象外です。確認用の文字列としては保持しています。</div>`;
+      });
       return;
     }
 
@@ -11696,31 +11783,31 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         sourceSheet: preview.sourceSheet || ""
       };
       recordLogicalQr(qrText, preview);
-      decodedPreview.innerHTML = [
+      queueReadPaint("preview", () => { decodedPreview.innerHTML = [
         `<div class="previewTitle"><span>ヘッダーQR</span><span class="ok">${preview.headers.length}列</span></div>`,
         `<div class="previewMeta">${formatPreviewMeta(preview)}</div>`,
         renderHorizontalHeader(preview.headers)
-      ].join("");
+      ].join(""); });
       return;
     }
 
     if(preview.type === "row"){
       recordLogicalQr(qrText, preview);
       const headers = latestHeaders.length ? latestHeaders : preview.values.map((_, i) => `列${i + 1}`);
-      decodedPreview.innerHTML = [
+      queueReadPaint("preview", () => { decodedPreview.innerHTML = [
         `<div class="previewTitle"><span>行データQR</span><span class="ok">${preview.values.length}項目</span></div>`,
         `<div class="previewMeta">${formatPreviewMeta(preview)}</div>`,
         renderHorizontalRow(headers, preview.values)
-      ].join("");
+      ].join(""); });
     }
   }
 
   function showDecodedFilePreview(fileInfo){
-    decodedPreview.innerHTML = [
+    queueReadPaint("preview", () => { decodedPreview.innerHTML = [
       `<div class="previewTitle"><span>ファイルQR</span><span class="ok">保存可能</span></div>`,
       `<div class="previewMeta">ファイル名: ${escapeHtml(fileInfo.fileName)} / サイズ: ${fileInfo.byteSize.toLocaleString("ja-JP")} bytes / SHA-256: ${escapeHtml(fileInfo.sha256.slice(0, 16))}...</div>`,
       `<div class="emptyPreview">すべての分割QRを読み取り、ファイル内容の検証が完了しました。「ファイル保存」から元ファイルとして保存できます。</div>`
-    ].join("");
+    ].join(""); });
   }
 
   function recordLogicalQr(qrText, preview){
@@ -11744,7 +11831,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       readStats.lastKind = "行データ";
       readStats.lastNote = `${preview.values.length}項目`;
     }
-    updateReadCounters();
+    queueReadCounters();
   }
 
   function rememberCompletedRow(preview, meta, rowId){
@@ -11771,7 +11858,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     return meta.groupId;
   }
 
-  function updateReadCounters(){
+  function updateReadCounters(splitUpdates){
     totalQrCount.textContent = `${readStats.total}枚`;
     qrBreakdown.innerHTML = `ヘッダー${readStats.headerQr} / 行${readStats.rowQr} / ファイル${readStats.fileQr} / 勤務表${readStats.rosterQr} / その他${readStats.otherQr}<br>読取${readStats.scanEvents} / 重複${readStats.duplicates}`;
     if(hasFileTransfer()){
@@ -11811,7 +11898,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     lastQrNote.textContent = readStats.lastNote;
     updateCopyButtonState();
     updateLiveSummary();
-    updateLiveParts();
+    updateLiveParts(splitUpdates);
     updateTopControls();
   }
 
@@ -11907,7 +11994,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       .sort((a, b) => (b.lastTouchedAt || 0) - (a.lastTouchedAt || 0) || String(a.key || a.groupId).localeCompare(String(b.key || b.groupId)))[0] || null;
   }
 
-  function updateLiveParts(){
+  function updateLiveParts(splitUpdates){
     if(!liveParts) return;
     const group = currentPrimaryGroup(hasFileTransfer(), hasRosterTransfer());
     if(group && group.total > 0){
@@ -11919,8 +12006,11 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
           const done = group.parts.has(partNo);
           return `<div class="part ${done ? "done" : ""}" data-group-key="${groupKey}" data-part-no="${partNo}">${partNo}/${group.total}</div>`;
         }).join("");
-      }else if(pendingLivePartScroll?.type === "group" && pendingLivePartScroll.groupKey === group.key){
-        liveParts.children[pendingLivePartScroll.partNo - 1]?.classList.add("done");
+      }else{
+        const updated = splitUpdates?.get(group.key);
+        if(updated?.group === group){
+          for(const no of updated.parts.keys()) liveParts.children[no - 1]?.classList.add("done");
+        }
       }
       scrollLivePartsToPending();
       return;
@@ -12048,7 +12138,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       return rosterReadiness();
     }
 
-    if(!combinedText.value.trim() || !history.length){
+    if(!history.length){
       return { ok: false, message: "コピー/出力できる完成データがありません" };
     }
 
@@ -12410,6 +12500,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   async function copyCompleteText(button){
+    flushReadUi();
     const readiness = copyReadiness();
     if(!readiness.ok){
       setState(readiness.message, false);
@@ -12769,6 +12860,12 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
 
   function resetAll(){
+    if(readUiTimer !== null) window.clearTimeout(readUiTimer);
+    readUiTimer = null;
+    pendingReadPaints.clear();
+    pendingSplitPaints.clear();
+    readCountersPending = false;
+    flushAfterReceive = false;
     lastSeen = "";
     lastSeenAt = 0;
     history = [];
@@ -12821,7 +12918,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     if(missingListDialog.open) return;
     missingListDialog.showModal();
     missingListText.scrollTop = 0;
-    updateLiveSummary();
+    if(!flushReadUi()) updateLiveSummary();
   });
   btnExit.addEventListener("click", exitApp);
   btnCloseLaunchQr.addEventListener("click", hideLaunchQr);
